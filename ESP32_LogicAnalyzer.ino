@@ -35,11 +35,21 @@ void setup(void) {
   Serial_Debug_Port.begin(Serial_Debug_Port_Baud);
   OLS_Port.begin(OLS_Port_Baud);
 
-  //WiFi.mode(WIFI_OFF);
-  //btStop();
-    
-  pinMode(ledPin, OUTPUT);
+/*jma
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  WiFi.mode(WIFI_OFF);
 
+  btStop();
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();  //**
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit(); //**
+*/
+ 
+  pinMode(ledPin, OUTPUT);
+  Serial_Debug_Port.printf("\r\nESP32 Logic Sniffer V1.01\r\n");
+  Serial_Debug_Port.printf("Initial boot ..\r\n");
   dma_desc_init(CAPTURE_SIZE);
 
   cfg.gpio_bus[0] = 0;
@@ -81,110 +91,115 @@ byte cmdBytes[5];
 
 void loop()
 {
-  int i;
-  if (OLS_Port.available() > 0) {
-    int z = OLS_Port.available();
-    cmdByte = OLS_Port.read();
-    Serial_Debug_Port.printf("CMD: 0x%02X\r\n", cmdByte);
-    int chan_num = 0;
-    switch (cmdByte) {
-      case SUMP_RESET:
-        break;
-      case SUMP_QUERY:
-        OLS_Port.print(F("1ALS"));
-        //OLS_Port.print(F("1SLO"));
-        break;
-      case SUMP_ARM:
-        captureMilli();
-        break;
-      case SUMP_TRIGGER_MASK_CH_A:
-        getCmd();
-        trigger = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
-        if (trigger) {
-          Serial_Debug_Port.printf("Trigger Set for inputs : ");
-          for ( int i = 0; i < 16 ; i++ )
-            if (( trigger >> i) & 0x1 )
-              Serial_Debug_Port.printf("%d,  ", i );
-          Serial_Debug_Port.println();
-        }
-        break;
-      case SUMP_TRIGGER_VALUES_CH_A:
-        getCmd();
+//jma  int i;
+//jma  int z;
+//jma  int chan_num = 0;
+  Serial_Debug_Port.printf("Main loop ..\r\n");
+  while (1) {
+    if (OLS_Port.available() > 0) {
+//jma      z = OLS_Port.available();
+      cmdByte = OLS_Port.read();
+      Serial_Debug_Port.printf("CMD: 0x%02X\r\n", cmdByte);
 
-        trigger_values = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
-        if (trigger) {
-          Serial_Debug_Port.printf("Trigger Val for inputs : ");
-          for ( int i = 0; i < 16 ; i++ )
-            if (( trigger >> i) & 0x1 )
-              Serial_Debug_Port.printf("%C,  ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
-          Serial_Debug_Port.println();
-        }
-        break;
-
-      case SUMP_TRIGGER_MASK_CH_B:
-      case SUMP_TRIGGER_MASK_CH_C:
-      case SUMP_TRIGGER_MASK_CH_D:
-      case SUMP_TRIGGER_VALUES_CH_B:
-      case SUMP_TRIGGER_VALUES_CH_C:
-      case SUMP_TRIGGER_VALUES_CH_D:
-      case SUMP_TRIGGER_CONFIG_CH_A:
-      case SUMP_TRIGGER_CONFIG_CH_B:
-      case SUMP_TRIGGER_CONFIG_CH_C:
-      case SUMP_TRIGGER_CONFIG_CH_D:
-        getCmd();
-        /*
-           No config support
-        */
-        break;
-      case SUMP_SET_DIVIDER:
-        /*
-             the shifting needs to be done on the 32bit unsigned long variable
-           so that << 16 doesn't end up as zero.
-        */
-        getCmd();
-        divider = cmdBytes[2];
-        divider = divider << 8;
-        divider += cmdBytes[1];
-        divider = divider << 8;
-        divider += cmdBytes[0];
-        setupDelay();
-        break;
-      case SUMP_SET_READ_DELAY_COUNT:
-        getCmd();
-        readCount = 4 * (((cmdBytes[1] << 8) | cmdBytes[0]) + 1);
-        if (readCount > MAX_CAPTURE_SIZE)
-          readCount = MAX_CAPTURE_SIZE;
-        delayCount = 4 * (((cmdBytes[3] << 8) | cmdBytes[2]) + 1);
-        if (delayCount > MAX_CAPTURE_SIZE)
-          delayCount = MAX_CAPTURE_SIZE;
-        break;
-
-      case SUMP_SET_FLAGS:
-        getCmd();
-        rleEnabled = cmdBytes[1] & 0x1;
-        if (rleEnabled)
-          Serial_Debug_Port.println("RLE Compression enable");
-        else
-          Serial_Debug_Port.println("Non-RLE Operation enable");
-
-        Serial_Debug_Port.printf("Demux %c\r\n", cmdBytes[0] & 0x01 ? 'Y' : 'N');
-        Serial_Debug_Port.printf("Filter %c\r\n", cmdBytes[0] & 0x02 ? 'Y' : 'N');
-        channels_to_read = (~(cmdBytes[0] >> 2) & 0x0F);
-        Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
-        if(channels_to_read == 3)
-        Serial_Debug_Port.printf("External Clock %c\r\n", cmdBytes[0] & 0x40 ? 'Y' : 'N');
-        Serial_Debug_Port.printf("inv_capture_clock %c\r\n", cmdBytes[0] & 0x80 ? 'Y' : 'N');
-        break;
-
-      case SUMP_GET_METADATA:
-        get_metadata();
-        break;
-      case SUMP_SELF_TEST:
-        break;
-      default:
-        Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", cmdByte );
-        getCmd();
-        break;
+      switch (cmdByte) {
+        case SUMP_RESET:
+          break;
+        case SUMP_QUERY:
+          OLS_Port.print(F("1ALS"));
+          //OLS_Port.print(F("1SLO"));
+          break;
+        case SUMP_ARM:
+          captureMilli();
+          break;
+        case SUMP_TRIGGER_MASK_CH_A:
+          getCmd();
+          trigger = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
+          if (trigger) {
+            Serial_Debug_Port.printf("Trigger Set for inputs : ");
+            for ( int i = 0; i < 16 ; i++ )
+              if (( trigger >> i) & 0x1 )
+                Serial_Debug_Port.printf("%d,  ", i );
+            Serial_Debug_Port.println();
+          }
+          break;
+        case SUMP_TRIGGER_VALUES_CH_A:
+          getCmd();
+  
+          trigger_values = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
+          if (trigger) {
+            Serial_Debug_Port.printf("Trigger Val for inputs : ");
+            for ( int i = 0; i < 16 ; i++ )
+              if (( trigger >> i) & 0x1 )
+                Serial_Debug_Port.printf("%C,  ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
+            Serial_Debug_Port.println();
+          }
+          break;
+  
+        case SUMP_TRIGGER_MASK_CH_B:
+        case SUMP_TRIGGER_MASK_CH_C:
+        case SUMP_TRIGGER_MASK_CH_D:
+        case SUMP_TRIGGER_VALUES_CH_B:
+        case SUMP_TRIGGER_VALUES_CH_C:
+        case SUMP_TRIGGER_VALUES_CH_D:
+        case SUMP_TRIGGER_CONFIG_CH_A:
+        case SUMP_TRIGGER_CONFIG_CH_B:
+        case SUMP_TRIGGER_CONFIG_CH_C:
+        case SUMP_TRIGGER_CONFIG_CH_D:
+          getCmd();
+          /*
+             No config support
+          */
+          break;
+        case SUMP_SET_DIVIDER:
+          /*
+               the shifting needs to be done on the 32bit unsigned long variable
+             so that << 16 doesn't end up as zero.
+          */
+          getCmd();
+          divider = cmdBytes[2];
+          divider = divider << 8;
+          divider += cmdBytes[1];
+          divider = divider << 8;
+          divider += cmdBytes[0];
+          setupDelay();
+          break;
+        case SUMP_SET_READ_DELAY_COUNT:
+          getCmd();
+          readCount = 4 * (((cmdBytes[1] << 8) | cmdBytes[0]) + 1);
+          if (readCount > MAX_CAPTURE_SIZE)
+            readCount = MAX_CAPTURE_SIZE;
+          delayCount = 4 * (((cmdBytes[3] << 8) | cmdBytes[2]) + 1);
+          if (delayCount > MAX_CAPTURE_SIZE)
+            delayCount = MAX_CAPTURE_SIZE;
+          break;
+  
+        case SUMP_SET_FLAGS:
+          getCmd();
+          rleEnabled = cmdBytes[1] & 0x1;
+          if (rleEnabled)
+            Serial_Debug_Port.println("RLE Compression enable");
+          else
+            Serial_Debug_Port.println("Non-RLE Operation enable");
+  
+          Serial_Debug_Port.printf("Demux %c\r\n", cmdBytes[0] & 0x01 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("Filter %c\r\n", cmdBytes[0] & 0x02 ? 'Y' : 'N');
+          channels_to_read = (~(cmdBytes[0] >> 2) & 0x0F);
+          Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
+          if(channels_to_read == 3)
+          Serial_Debug_Port.printf("External Clock %c\r\n", cmdBytes[0] & 0x40 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", cmdBytes[0] & 0x80 ? 'Y' : 'N');
+          break;
+  
+        case SUMP_GET_METADATA:
+          get_metadata();
+          break;
+        case SUMP_SELF_TEST:
+          break;
+        default:
+          Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", cmdByte );
+          getCmd();
+          break;
+      }
     }
   }
 }
@@ -251,7 +266,7 @@ void setupDelay() {
 }
 
 void captureMilli() {
-  uint32_t a, b, c, d;
+//jma  uint32_t a, b, c, d;
   Serial_Debug_Port.printf("FreeHeap         :%u\r\n", ESP.getFreeHeap());
   Serial_Debug_Port.printf("FreeHeap 64 Byte :%u\r\n", heap_caps_get_largest_free_block(64) );
   Serial_Debug_Port.printf("Triger Values 0x%X\r\n", trigger_values);
@@ -262,6 +277,7 @@ void captureMilli() {
   digitalWrite( ledPin, HIGH );
 
   ESP_LOGD(TAG, "dma_sample_count: %d", s_state->dma_sample_count);
+  
   rle_init();
   start_dma_capture();
 
@@ -323,9 +339,10 @@ void captureMilli() {
   if(s_state->dma_desc_triggered < 0){ //if not triggered mode,
     s_state->dma_desc_triggered=0;  //first desc is 0
     ESP_LOGD(TAG, "Normal TX");
-    }
-  else
+  }
+  else {
     ESP_LOGD(TAG, "Triggered TX");
+  }
     
   if(rleEnabled){
     ESP_LOGD(TAG, "RLE TX");
@@ -358,7 +375,7 @@ void captureMilli() {
 
     if( channels_to_read == 3 )
     {
-      int a=0;
+//jma      int a=0;
       Serial_Debug_Port.printf("Debug RLE BUFF:" );
       for( int i=0; i <50 ; i++){
         Serial_Debug_Port.printf("0x%X ", rle_buff[i] );
