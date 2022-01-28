@@ -2,7 +2,10 @@
 
 ## A *SUMP* compatible 16Bit Logic Analyzer for ESP32 MCUs.
 
-![PulseView](/images/ESP32_LogicAnalyzer_in_PulseViewSmall.png)
+<p align="center" width="100%">
+    ESP32 LogicAnalyzer in PulseViewSmall.<br>
+    <img width="75%" src="/images/ESP32_LogicAnalyzer_in_PulseViewSmall.png">
+</p>
 
 * Use Arduino to compile and flash your ESP32.
 * Uses **ESP32 I2S DMA** and could capture speeds up to **20 Mhz**.
@@ -23,12 +26,11 @@
   
 ## Protocol  
 
-https://sigrok.org/wiki/Openbench_Logic_Sniffer#Protocol
-
+https://sigrok.org/wiki/Openbench_Logic_Sniffer#Protocol  
 All **communication** is done using a standard RS232 connection with 8 data bits, 1 stop bit and no parity.  
 The transfer rate is not emulated over USB and can be set to any speed supported by the operating system.  
 XON/XOFF software flow control is available. 
-  
+
 When **sending captured data** the analyzer will send blocks of four bytes, the first containing the lowest channels.  
 No start or end sequence exists.  
 The host can assume an end of transmission if no data has been received for the duration of one byte.  
@@ -54,19 +56,30 @@ It will stop transmitting captured data.
 This command is being used for xon/xoff flow control.
 ### Long Commands
 **Are five bytes long. The first byte contains the opcode. The bytes are displayed in the order in which they are sent to the serial port starting left. The bits within one byte are displayed most significant first.**  
-#### Set Trigger Mask (0xc0, 0xc4, 0xc8, 0xcc)  
+#### Set Trigger Mask (0xc0, 0xc4, 0xc8, 0xcc) 
+<p align="center" width="100%">
+    SetTriggerMask<br>
+    <img width="75%" src="/images/1100xx00.png">
+</p>
 Defines which trigger values must match.  
 In parallel mode each bit represents one channel, in serial mode each bit represents one of the last 32 samples of the selected channel. The opcodes refer to stage 0-3 in the order given above.  
 (Protocol version 0 only supports stage 0.)  
 
-![SetTriggerMask](/images/1100xx00.png)
 #### Set Trigger Values (0xc1, 0xc5, 0xc9, 0xcd)  
+<p align="center" width="100%">
+    SetTriggerValues<br>
+    <img width="75%" src="/images/1100xx01.png">
+</p>
 Defines which values individual bits must have.  
 In parallel mode each bit represents one channel, in serial mode each bit represents one of the last 32 samples of the selected channel. The opcodes refer to stage 0-3 in the order given above.  
 (Protocol version 0 only supports stage 0.)  
 
-![SetTriggerValues](/images/1100xx01.png
 #### Set Trigger Configuration (0xc2, 0xc6, 0xca, 0xce)  
+<p align="center" width="100%">
+    Set Trigger Configuration<br>
+    <img width="75%" src="/images/1100xx10.png">
+</p>  
+
 Configures the selected trigger stage.  
 The opcodes refer to stage 0-3 in the order given above. The following parameters will be set:  
   - *delay*  
@@ -81,18 +94,28 @@ When set to 1 the stage operates as serial trigger, otherwise it used as paralle
 When set to 1 a match will start the capturing process. The trigger level will rise on match regardless of this flag.  
 (Command available as of protocol version 1.)  
 
-![SetTriggerConfiguration](/images/1100xx10.png)  
 #### Set Divider (0x80)  
+<p align="center" width="100%">
+    Set Divider<br>
+    <img width="75%" src="/images/10000000.png">
+</p>  
+
 When x is written, the sampling frequency is set to f = clock / (x + 1).  
 
-![SetDivider](/images/10000000.png)
 #### Set Read & Delay Count (0x81)  
+<p align="center" width="100%">
+    Set Read & Delay Count<br>
+    <img width="75%" src="/images/10000001.png">
+</p>  
 **Read Count** is the number of samples (divided by four) to read back from memory and sent to the host computer.  
 **Delay Count** is the number of samples (divided by four) to capture after the trigger fired.  
 A Read Count bigger than the Delay Count means that data from before the trigger match will be read back. This data will only be valid if the device was running long enough before the trigger matched.  
 
-![SetRead&DelayCount](/images/10000001.png)  
 #### Set Flags (0x82)  
+<p align="center" width="100%">
+    Set Flags<br>
+    <img width="75%" src="/images/10000010.png">
+</p>  
 Sets the following flags:  
   - *demux*  
 Enables the demux input module. (Filter must be off.)
@@ -105,4 +128,3 @@ Selects the clock to be used for sampling. If set to 0, the internal clock divid
   - *inverted*  
 When set to 1, the external clock will be inverted before being used. The inversion causes a delay that may cause problems at very high clock rates. This option only has an effect with external set to 1.  
 
-![SetFlags](/images/10000010.png)  
