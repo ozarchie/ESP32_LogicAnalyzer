@@ -2,8 +2,9 @@
 
 ## A *SUMP* compatible 16Bit Logic Analyzer for ESP32 MCUs.
 
-![PulseView](/ESP32_LogicAnalyzer_in_PulseViewSmall.png)
-
+![PulseView](/ESP32_LogicAnalyzer_in_PulseViewSmall.png)  
+  
+  
 * Use Arduino to compile and flash your ESP32.
 * Uses **ESP32 I2S DMA** and could capture speeds up to **20 Mhz**.
 * Support **8 bit** and **16 bit** operations.
@@ -58,12 +59,14 @@ This command is being used for xon/xoff flow control.
 Defines which trigger values must match.  
 In parallel mode each bit represents one channel, in serial mode each bit represents one of the last 32 samples of the selected channel. The opcodes refer to stage 0-3 in the order given above.  
 (Protocol version 0 only supports stage 0.)  
+
 ![SetTriggerMask](1100xx00.png)
 #### Set Trigger Values (0xc1, 0xc5, 0xc9, 0xcd)  
 Defines which values individual bits must have.  
 In parallel mode each bit represents one channel, in serial mode each bit represents one of the last 32 samples of the selected channel. The opcodes refer to stage 0-3 in the order given above.  
 (Protocol version 0 only supports stage 0.)  
-![SetTriggerValues](1100xx01.png
+
+![SetTriggerValues](1100xx01.png)
 #### Set Trigger Configuration (0xc2, 0xc6, 0xca, 0xce)  
 Configures the selected trigger stage.  
 The opcodes refer to stage 0-3 in the order given above. The following parameters will be set:  
@@ -78,14 +81,17 @@ When set to 1 the stage operates as serial trigger, otherwise it used as paralle
   - *start*  
 When set to 1 a match will start the capturing process. The trigger level will rise on match regardless of this flag.  
 (Command available as of protocol version 1.)  
+
 ![SetTriggerConfiguration](1100xx10.png)  
 #### Set Divider (0x80)  
 When x is written, the sampling frequency is set to f = clock / (x + 1).  
-![SetDivider](https://sigrok.org/wimg/0/02/10000000.png)
+
+![SetDivider](10000000.png)
 #### Set Read & Delay Count (0x81)  
 **Read Count** is the number of samples (divided by four) to read back from memory and sent to the host computer.  
 **Delay Count** is the number of samples (divided by four) to capture after the trigger fired.  
 A Read Count bigger than the Delay Count means that data from before the trigger match will be read back. This data will only be valid if the device was running long enough before the trigger matched.  
+
 ![SetRead&DelayCount](10000001.png)  
 #### Set Flags (0x82)  
 Sets the following flags:  
@@ -99,4 +105,5 @@ Disable channel group. Disabled groups are excluded from data transmissions. Thi
 Selects the clock to be used for sampling. If set to 0, the internal clock divided by the configured divider is used, and if set to 1, the external clock will be used. Filter and demux are only available with internal clock.
   - *inverted*  
 When set to 1, the external clock will be inverted before being used. The inversion causes a delay that may cause problems at very high clock rates. This option only has an effect with external set to 1.  
+
 ![SetFlags](10000010.png)  
