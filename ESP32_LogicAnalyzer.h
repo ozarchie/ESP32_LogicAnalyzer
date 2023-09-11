@@ -13,41 +13,70 @@
 #include <HardwareSerial.h>
 #include "driver/ledc.h"
 
-#define USE_SERIAL2_FOR_OLS 1 // If 1, UART2 = OLS and UART0=Debug
+#define DEBUG_OPERATION_TIMES              // If defined, print times for DMA and RLE operations
 
-#define ALLOW_ZERO_RLE 0
+#define USE_SERIAL2_FOR_OLS   0           // If 1, UART2 = OLS and UART0=Debug; else, UART0 = OLS and UART2=Debug
+#define ALLOW_ZERO_RLE        1           // Enable RLE on data.
+#define CAPTURE_SIZE          128000
+#ifdef DEBUG_OPERATION_TIMES
+#define RLE_SIZE              92000
+#else
+#define RLE_SIZE              96000
+#endif
+
+// PIN Definitions for DEVKITC_V4
+#define LED_PIN               2           //Led on while running and Blinks while transfering data.
+#define CLK_PIN               0
+
+#define D01_PIN               13    // GPIO
+#define D02_PIN               12    // GPIO
+#define D03_PIN               14    // GPIO
+#define D04_PIN               27    // GPIO
+#define D05_PIN               26    // GPIO
+#define D06_PIN               25    // GPIO
+#define D07_PIN               33    // GPIO
+#define D08_PIN               32    // GPIO
+#define D09_PIN                5    // SS
+#define D10_PIN               18    // CLK
+#define D11_PIN               23    // MOSI
+#define D12_PIN               19    // MISO
+#define D13_PIN               22    // SCL1
+#define D14_PIN               21    // SDA1
+#define D15_PIN                4    // RTC-10
+#define D16_PIN               15    // RTC-13
+
+#define A01_PIN               35    // ADC1-7
+#define A02_PIN               34    // ADC1-6
+#define A03_PIN               39    // ADC1-3
+#define A04_PIN               36    // ADC1-0
 
  /// ALLOW_ZERO_RLE 1 is Fast mode.
- //   Add RLE Count 0 to RLE stack for non repeated values and postpone the RLE processing so faster.
- //    8Bit Mode : ~28.4k clock per 4k block, captures 3000us while inspecting ~10Mhz clock at 20Mhz mode
- //   16Bit Mode : ~22.3k clock per 4k block, captures 1500us while inspecting ~10Mhz clock at 20Mhz mode
+ //Add RLE Count 0 to RLE stack for non repeated values and postpone the RLE processing so faster.
+ // 8Bit Mode : ~28.4k clock per 4k block, captures 3000us while inspecting ~10Mhz clock at 20Mhz mode
+ //16Bit Mode : ~22.3k clock per 4k block, captures 1500us while inspecting ~10Mhz clock at 20Mhz mode
  
  /// ALLOW_ZERO_RLE 0 is Slow mode.
- //   RAW RLE buffer. It doesn't add 0 count values for non-repeated RLE values and process flags on the fly, so little slow but efficient.
- //    8Bit Mode : ~34.7k clock per 4k block, captures 4700us while inspecting ~10Mhz clock at 20Mhz mode
- //   16Bit Mode : ~30.3k clock per 4k block, captures 2400us while inspecting ~10Mhz clock at 20Mhz mode
+ //just RAW RLE buffer. It doesn't add 0 count values for non-repeated RLE values and process flags on the fly, so little slow but efficient.
+ // 8Bit Mode : ~34.7k clock per 4k block, captures 4700us while inspecting ~10Mhz clock at 20Mhz mode
+ //16Bit Mode : ~30.3k clock per 4k block, captures 2400us while inspecting ~10Mhz clock at 20Mhz mode
 
 #define RXD2 16
 #define TXD2 17
 
-#define ledPin 21 //Led on while running and Blinks while transfering data.
-
+// If 1, UART2 = OLS and UART0=Debug
+// else, UART0 = OLS and UART2=Debug
 #if USE_SERIAL2_FOR_OLS
-
 #define Serial_Debug_Port Serial
 //#define Serial_Debug_Port_Baud 115200
 #define Serial_Debug_Port_Baud 921600
 //#define Serial_Debug_Port_Baud 1000000
 #define OLS_Port Serial2
 #define OLS_Port_Baud 3000000
-
 #else
-
 #define Serial_Debug_Port Serial2
-#define Serial_Debug_Port_Baud 921600
+#define Serial_Debug_Port_Baud 115200
 #define OLS_Port Serial
 #define OLS_Port_Baud 921600
-
 #endif
 
 #ifdef DEBUG_OPERATION_TIMES
@@ -100,13 +129,12 @@ static i2s_parallel_state_t* i2s_state[2] = {NULL, NULL};
 #define DMA_MAX (4096-4)
 
 
-/*jma
+
 //Calculate the amount of dma descs needed for a buffer desc
 static int calc_needed_dma_descs_for(i2s_parallel_buffer_desc_t *desc) {
   int ret = (desc->size + DMA_MAX - 1) / DMA_MAX;
   return ret;
 }
-*/
 
 typedef union {
     struct {
@@ -219,9 +247,11 @@ bool rle_init(void){
   rle_process=-1;
   
   rle_buff_p=rle_buff;
-  rle_buff_end = rle_buff+rle_size-4;
+  rle_buff_end = rle_buff+RLE_SIZE-4;
 
-  memset( rle_buff, 0x00, rle_size);
+  memset( rle_buff, 0x00, RLE_SIZE);
+  
+  return true;
 }
 
 void dma_serializer( dma_elem_t *dma_buffer ){
@@ -233,7 +263,8 @@ void dma_serializer( dma_elem_t *dma_buffer ){
 }
 void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka=0;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -246,7 +277,7 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
     
    int dword_count=(sample_size/4) -1;
    
-//jma   clocka = xthal_get_ccount();
+   clocka = xthal_get_ccount();
    
    /* No, Assembly is not that hard. You are just too lazzy. */
 
@@ -404,7 +435,8 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
 
 void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -417,7 +449,7 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
     
    int dword_count=(sample_size/4) -1;
    
-//jma   clocka = xthal_get_ccount();
+   clocka = xthal_get_ccount();
    
    /* No, Assembly is not that hard. You are just too lazzy. */
 
@@ -575,7 +607,8 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
 
 void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -588,7 +621,7 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
     
    int dword_count=(sample_size/4) -1;
    
-//jma   clocka = xthal_get_ccount();
+   clocka = xthal_get_ccount();
    
    /* No, Assembly is not that hard. You are just too lazzy. */
    
