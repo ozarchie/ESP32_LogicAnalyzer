@@ -9,10 +9,12 @@ void start_dma_capture(void) {
   s_state->dma_filtered_count = 0;
   s_state->dma_desc_triggered = 0;
 
+#ifdef DEBUG_OPERATION_TIMES
 time_debug_indice_dma_p=0;
 time_debug_indice_rle_p=0;
 for(int i=0; i < 1024 ; i++ )
 time_debug_indice_dma[i]=time_debug_indice_rle[i]=0;
+#endif
 
   ESP_ERROR_CHECK(esp_intr_disable(s_state->i2s_intr_handle));
   i2s_conf_reset();
@@ -62,7 +64,7 @@ uint16_t buff_process_trigger_1(uint16_t *buff, int size, bool printit=true){
   if(printit)
     ESP_LOGD(TAG, "Process trigger 1: 0x%X", a);
   return a;
-  }
+}
 
 uint16_t buff_process_trigger_0(uint16_t *buff, int size, bool printit=true){
   uint16_t a = 0xFF;
@@ -71,8 +73,7 @@ uint16_t buff_process_trigger_0(uint16_t *buff, int size, bool printit=true){
   if(printit)
     ESP_LOGD(TAG, "Process trigger 0: 0x%X", a);
   return a;
-  }
-
+}
 static void IRAM_ATTR i2s_isr(void* arg) {
   if(trigger==0){
     ESP_LOGD(TAG, "DMA INT Number %d Status 0x%x", s_state->dma_desc_cur, I2S0.int_raw.val );
@@ -92,10 +93,10 @@ static void IRAM_ATTR i2s_isr(void* arg) {
   //gpio_set_level(, 1); //Should show a pulse on the logic analyzer when an interrupt occurs
   //gpio_set_level(, 0);
   if(I2S0.int_raw.in_done){ //filled desc
+    #ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_dma[time_debug_indice_dma_p++]=xthal_get_ccount();
-    
+    #endif
     //Serial_Debug_Port.printf("DMA INT Number %d Status 0x%xX\r\n", s_state->dma_desc_cur, I2S0.int_raw.val);
-    
     if(trigger && (stop_at_desc==-1)){
       static uint16_t trigger_helper_0;
       static uint16_t trigger_helper_1;
@@ -139,9 +140,9 @@ static void IRAM_ATTR i2s_isr(void* arg) {
               fast_rle_block_encode_asm_16bit( (uint8_t*)s_state->dma_buf[ s_state->dma_desc_cur % s_state->dma_desc_count], s_state->dma_buf_width);
           }
 
-      if( (rle_size - (rle_buff_p - rle_buff )) < 4000) {
+      if( (RLE_SIZE - (rle_buff_p - rle_buff )) < 4000) {
         //break;
-        ESP_LOGD(TAG,"Break due rle_buff fill: %d\r\n", (rle_size - (rle_buff_p - rle_buff )));
+        ESP_LOGD(TAG,"Break due rle_buff fill: %d\r\n", (RLE_SIZE - (rle_buff_p - rle_buff )));
         I2S0.int_ena.in_suc_eof = 1;
         esp_intr_disable(s_state->i2s_intr_handle);
         i2s_conf_reset();
@@ -182,8 +183,7 @@ static void IRAM_ATTR i2s_isr(void* arg) {
    }
  
   I2S0.int_clr.val = I2S0.int_raw.val;   
-  }
-
+}
 static void dma_desc_deinit(){
     ESP_ERROR_CHECK(esp_intr_disable(s_state->i2s_intr_handle));
     if (s_state->dma_buf) {
@@ -406,7 +406,6 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
   //Allocate DMA descriptors
   i2s_state[0] = (i2s_parallel_state_t*)malloc(sizeof(i2s_parallel_state_t));
   i2s_parallel_state_t *st = i2s_state[0];
-  
   s_state->dma_done = false;
   s_state->dma_desc_cur = 0;
   s_state->dma_received_count = 0;
@@ -422,12 +421,11 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
   I2S0.int_clr.val = I2S0.int_raw.val;
   I2S0.int_ena.val = 0;
   I2S0.int_ena.in_done = 1;
-
   //Setup I2S DMA Interrupt
   esp_err_t err = esp_intr_alloc( ETS_I2S0_INTR_SOURCE,
                     ESP_INTR_FLAG_INTRDISABLED | ESP_INTR_FLAG_LEVEL1 | ESP_INTR_FLAG_IRAM,
                     &i2s_isr,  NULL, &s_state->i2s_intr_handle );
-  
+
   //Enable the Interrupt
   //ESP_ERROR_CHECK(esp_intr_enable(s_state->i2s_intr_handle));
   
@@ -460,7 +458,7 @@ static void enable_out_clock( int freq_in_hz ) {
     ch_conf.intr_type = LEDC_INTR_DISABLE;
     ch_conf.duty = 1;
     ch_conf.speed_mode = LEDC_HIGH_SPEED_MODE;
-    ch_conf.gpio_num = 23; //s_config.pin_xclk; 
+    ch_conf.gpio_num = CLK_PIN; //s_config.pin_xclk; 
     err = ledc_channel_config(&ch_conf);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "ledc_channel_config failed, rc=%x", err);

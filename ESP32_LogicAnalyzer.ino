@@ -25,45 +25,65 @@
  *  https://github.com/gillham/logic_analyzer/issues for SUMP protocol as template.
  * 
  */ 
-
+static const char* TAG = "ESP32_LogicAnalyzer";
 #include "ESP32_LogicAnalyzer.h"
 
 i2s_parallel_buffer_desc_t bufdesc;
 i2s_parallel_config_t cfg;
 
 void setup(void) {
-  Serial_Debug_Port.begin(Serial_Debug_Port_Baud);
+  Serial_Debug_Port.begin(Serial_Debug_Port_Baud, SERIAL_8N1, RXD2, TXD2);
   OLS_Port.begin(OLS_Port_Baud);
 
-  //WiFi.mode(WIFI_OFF);
-  //btStop();
-    
-  pinMode(ledPin, OUTPUT);
+/*jma
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  WiFi.mode(WIFI_OFF);
 
+  btStop();
+  esp_bluedroid_disable();
+  esp_bluedroid_deinit();  //**
+  esp_bt_controller_disable();
+  esp_bt_controller_deinit(); //**
+//*/
+ 
+  pinMode(LED_PIN, OUTPUT);
+  Serial_Debug_Port.printf("\r\nESP32 Logic Sniffer V1.01\r\n");
+  Serial_Debug_Port.printf("Initial boot ..\r\n");
   dma_desc_init(CAPTURE_SIZE);
 
-  cfg.gpio_bus[0] = 0;
-  cfg.gpio_bus[1] = 18;//GPIO01 used for UART 0 RX
-  cfg.gpio_bus[2] = 2;
-  cfg.gpio_bus[3] = 19;//GPIO03 used for UART 0 TX
-  cfg.gpio_bus[4] = 4;
-  cfg.gpio_bus[5] = 5;
-  cfg.gpio_bus[6] = -1;//GPIO06 used for SCK, bootloop
-  cfg.gpio_bus[7] = -1;//GPIO07 used for SDO, bootloop
+//  DEVKITc_V4 Pinout
+//  =================
+// Digital In
+  cfg.gpio_bus[0]  = D01_PIN;
+  cfg.gpio_bus[1]  = D02_PIN;
+  cfg.gpio_bus[2]  = D03_PIN;
+  cfg.gpio_bus[3]  = D04_PIN;
+  cfg.gpio_bus[4]  = D05_PIN;
+  cfg.gpio_bus[5]  = D06_PIN;
+  cfg.gpio_bus[6]  = D07_PIN;
+  cfg.gpio_bus[7]  = D08_PIN;
 
-  cfg.gpio_bus[8] = -1;//GPIO8 used for SDI, bootloop
-  cfg.gpio_bus[9] = -1;//GPIO9 lead SW_CPU_RESET on WROOVER module
-  cfg.gpio_bus[10] = -1;//GPI10 lead SW_CPU_RESET on WROOVER module
-  cfg.gpio_bus[11] = 22;//GPIO11 used for CMD, bootloop
-  cfg.gpio_bus[12] = 12;
-  cfg.gpio_bus[13] = 13;
-  cfg.gpio_bus[14] = 14;
-  cfg.gpio_bus[15] = 15;
+  cfg.gpio_bus[8]  = D09_PIN;    // SS
+  cfg.gpio_bus[9]  = D10_PIN;    // CLK
+  cfg.gpio_bus[10] = D11_PIN;    // MOSI
+  cfg.gpio_bus[11] = D12_PIN;    // MISO
+  cfg.gpio_bus[12] = D13_PIN;    // SCL1
+  cfg.gpio_bus[13] = D14_PIN;    // SDA1
+  cfg.gpio_bus[14] = D15_PIN;    // RTC-10
+  cfg.gpio_bus[15] = D16_PIN;    // RTC-13
 
+// Analog In
+/*
+  cfg.gpio_bus[8]  = A01_PIN;
+  cfg.gpio_bus[9]  = A02_PIN;
+  cfg.gpio_bus[10] = A03_PIN;
+  cfg.gpio_bus[11] = A04_PIN;
+*/
 
-  cfg.gpio_clk = 23; // Pin23 used for XCK input from LedC
+  cfg.gpio_clk = CLK_PIN;             // PinCLK_PIN used for XCK input from LedC
   cfg.bits = I2S_PARALLEL_BITS_16;
-  cfg.clkspeed_hz = 2 * 1000 * 1000; //resulting pixel clock = 1MHz
+  cfg.clkspeed_hz = 2 * 1000 * 1000;  //resulting pixel clock = 1MHz
   cfg.buf = &bufdesc;
 
   //enable_out_clock(I2S_HZ);
@@ -82,109 +102,115 @@ byte cmdBytes[5];
 void loop()
 {
   int i;
-  if (OLS_Port.available() > 0) {
-    int z = OLS_Port.available();
-    cmdByte = OLS_Port.read();
-    Serial_Debug_Port.printf("CMD: 0x%02X\r\n", cmdByte);
-    int chan_num = 0;
-    switch (cmdByte) {
-      case SUMP_RESET:
-        break;
-      case SUMP_QUERY:
-        OLS_Port.print(F("1ALS"));
-        //OLS_Port.print(F("1SLO"));
-        break;
-      case SUMP_ARM:
-        captureMilli();
-        break;
-      case SUMP_TRIGGER_MASK_CH_A:
-        getCmd();
-        trigger = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
-        if (trigger) {
-          Serial_Debug_Port.printf("Trigger Set for inputs : ");
-          for ( int i = 0; i < 16 ; i++ )
-            if (( trigger >> i) & 0x1 )
-              Serial_Debug_Port.printf("%d,  ", i );
-          Serial_Debug_Port.println();
-        }
-        break;
-      case SUMP_TRIGGER_VALUES_CH_A:
-        getCmd();
+  int z;
+  int chan_num = 0;
+  Serial_Debug_Port.printf("Main loop ..\r\n");
+  while (1) {
+    if (OLS_Port.available() > 0) {
+      z = OLS_Port.available();
+      cmdByte = OLS_Port.read();
+      Serial_Debug_Port.printf("CMD: 0x%02X\r\n", cmdByte);
+      chan_num = 0;
+      switch (cmdByte) {
+        case SUMP_RESET:
+          break;
+        case SUMP_QUERY:
+          OLS_Port.print(F("1ALS"));    Serial_Debug_Port.print(F("1ALS"));
+         // OLS_Port.write("1ALS");
+          Serial_Debug_Port.printf("1ALS\r\n");
+          //OLS_Port.print(F("1SLO"));
+          break;
+        case SUMP_ARM:
+          captureMilli();
+          break;
+        case SUMP_TRIGGER_MASK_CH_A:
+          getCmd();
+          trigger = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
+          if (trigger) {
+            Serial_Debug_Port.printf("Trigger Set for inputs : ");
+            for ( int i = 0; i < 16 ; i++ )
+              if (( trigger >> i) & 0x1 )
+                Serial_Debug_Port.printf("%d,  ", i );
+            Serial_Debug_Port.println();
+          }
+          break;
+        case SUMP_TRIGGER_VALUES_CH_A:
+          getCmd();
 
-        trigger_values = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
-        if (trigger) {
-          Serial_Debug_Port.printf("Trigger Val for inputs : ");
-          for ( int i = 0; i < 16 ; i++ )
-            if (( trigger >> i) & 0x1 )
-              Serial_Debug_Port.printf("%C,  ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
-          Serial_Debug_Port.println();
-        }
-        break;
+          trigger_values = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
+          if (trigger) {
+            Serial_Debug_Port.printf("Trigger Val for inputs : ");
+            for ( int i = 0; i < 16 ; i++ )
+              if (( trigger >> i) & 0x1 )
+                Serial_Debug_Port.printf("%C,  ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
+            Serial_Debug_Port.println();
+          }
+          break;
 
-      case SUMP_TRIGGER_MASK_CH_B:
-      case SUMP_TRIGGER_MASK_CH_C:
-      case SUMP_TRIGGER_MASK_CH_D:
-      case SUMP_TRIGGER_VALUES_CH_B:
-      case SUMP_TRIGGER_VALUES_CH_C:
-      case SUMP_TRIGGER_VALUES_CH_D:
-      case SUMP_TRIGGER_CONFIG_CH_A:
-      case SUMP_TRIGGER_CONFIG_CH_B:
-      case SUMP_TRIGGER_CONFIG_CH_C:
-      case SUMP_TRIGGER_CONFIG_CH_D:
-        getCmd();
-        /*
-           No config support
-        */
-        break;
-      case SUMP_SET_DIVIDER:
-        /*
-             the shifting needs to be done on the 32bit unsigned long variable
-           so that << 16 doesn't end up as zero.
-        */
-        getCmd();
-        divider = cmdBytes[2];
-        divider = divider << 8;
-        divider += cmdBytes[1];
-        divider = divider << 8;
-        divider += cmdBytes[0];
-        setupDelay();
-        break;
-      case SUMP_SET_READ_DELAY_COUNT:
-        getCmd();
-        readCount = 4 * (((cmdBytes[1] << 8) | cmdBytes[0]) + 1);
-        if (readCount > MAX_CAPTURE_SIZE)
-          readCount = MAX_CAPTURE_SIZE;
-        delayCount = 4 * (((cmdBytes[3] << 8) | cmdBytes[2]) + 1);
-        if (delayCount > MAX_CAPTURE_SIZE)
-          delayCount = MAX_CAPTURE_SIZE;
-        break;
+        case SUMP_TRIGGER_MASK_CH_B:
+        case SUMP_TRIGGER_MASK_CH_C:
+        case SUMP_TRIGGER_MASK_CH_D:
+        case SUMP_TRIGGER_VALUES_CH_B:
+        case SUMP_TRIGGER_VALUES_CH_C:
+        case SUMP_TRIGGER_VALUES_CH_D:
+        case SUMP_TRIGGER_CONFIG_CH_A:
+        case SUMP_TRIGGER_CONFIG_CH_B:
+        case SUMP_TRIGGER_CONFIG_CH_C:
+        case SUMP_TRIGGER_CONFIG_CH_D:
+          getCmd();
+          /*
+             No config support
+          */
+          break;
+        case SUMP_SET_DIVIDER:
+          /*
+               the shifting needs to be done on the 32bit unsigned long variable
+             so that << 16 doesn't end up as zero.
+          */
+          getCmd();
+          divider = cmdBytes[2];
+          divider = divider << 8;
+          divider += cmdBytes[1];
+          divider = divider << 8;
+          divider += cmdBytes[0];
+          setupDelay();
+          break;
+        case SUMP_SET_READ_DELAY_COUNT:
+          getCmd();
+          readCount = 4 * (((cmdBytes[1] << 8) | cmdBytes[0]) + 1);
+          if (readCount > MAX_CAPTURE_SIZE)
+            readCount = MAX_CAPTURE_SIZE;
+          delayCount = 4 * (((cmdBytes[3] << 8) | cmdBytes[2]) + 1);
+          if (delayCount > MAX_CAPTURE_SIZE)
+            delayCount = MAX_CAPTURE_SIZE;
+          break;
 
-      case SUMP_SET_FLAGS:
-        getCmd();
-        rleEnabled = cmdBytes[1] & 0x1;
-        if (rleEnabled)
-          Serial_Debug_Port.println("RLE Compression enable");
-        else
-          Serial_Debug_Port.println("Non-RLE Operation enable");
+        case SUMP_SET_FLAGS:
+          getCmd();
+          rleEnabled = cmdBytes[1] & 0x1;
+          if (rleEnabled)
+            Serial_Debug_Port.println("RLE Compression enable");
+          else
+            Serial_Debug_Port.println("Non-RLE Operation enable");
 
-        Serial_Debug_Port.printf("Demux %c\r\n", cmdBytes[0] & 0x01 ? 'Y' : 'N');
-        Serial_Debug_Port.printf("Filter %c\r\n", cmdBytes[0] & 0x02 ? 'Y' : 'N');
-        channels_to_read = (~(cmdBytes[0] >> 2) & 0x0F);
-        Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
-        if(channels_to_read == 3)
-        Serial_Debug_Port.printf("External Clock %c\r\n", cmdBytes[0] & 0x40 ? 'Y' : 'N');
-        Serial_Debug_Port.printf("inv_capture_clock %c\r\n", cmdBytes[0] & 0x80 ? 'Y' : 'N');
-        break;
-
-      case SUMP_GET_METADATA:
-        get_metadata();
-        break;
-      case SUMP_SELF_TEST:
-        break;
-      default:
-        Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", cmdByte );
-        getCmd();
-        break;
+          Serial_Debug_Port.printf("Demux %c\r\n", cmdBytes[0] & 0x01 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("Filter %c\r\n", cmdBytes[0] & 0x02 ? 'Y' : 'N');
+          channels_to_read = (~(cmdBytes[0] >> 2) & 0x0F);
+          Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
+          if(channels_to_read == 3)
+          Serial_Debug_Port.printf("External Clock %c\r\n", cmdBytes[0] & 0x40 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", cmdBytes[0] & 0x80 ? 'Y' : 'N');
+          break;
+        case SUMP_GET_METADATA:
+          get_metadata();
+          break;
+        case SUMP_SELF_TEST:
+          break;
+        default:
+          Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", cmdByte );
+          getCmd();
+          break;
+      }
     }
   }
 }
@@ -206,7 +232,7 @@ void get_metadata() {
   /* device name */
   OLS_Port.write((uint8_t)0x01);
   //OLS_Port.write("AGLAMv0");
-  OLS_Port.write("ESP32 Logic Analyzer v0.3");
+  OLS_Port.write("ESP32 Logic Analyzer v0.5");
   OLS_Port.write((uint8_t)0x00);
 
   /* firmware version */
@@ -224,7 +250,7 @@ void get_metadata() {
 
   /* sample rate (20MHz) */
   uint32_t capture_speed = 200000000;
-  OLS_Port.write((uint8_t)0x23);
+  OLS_Port.write((uint8_t) 0x23);
   OLS_Port.write((uint8_t) (capture_speed >> 24) & 0xFF);
   OLS_Port.write((uint8_t) (capture_speed >> 16) & 0xFF);
   OLS_Port.write((uint8_t) (capture_speed >> 8) & 0xFF);
@@ -254,23 +280,26 @@ void captureMilli() {
   uint32_t a, b, c, d;
   Serial_Debug_Port.printf("FreeHeap         :%u\r\n", ESP.getFreeHeap());
   Serial_Debug_Port.printf("FreeHeap 64 Byte :%u\r\n", heap_caps_get_largest_free_block(64) );
-  Serial_Debug_Port.printf("Triger Values 0x%X\r\n", trigger_values);
-  Serial_Debug_Port.printf("Triger        0x%X\r\n", trigger);
+  Serial_Debug_Port.printf("Trigger Values 0x%X\r\n", trigger_values);
+  Serial_Debug_Port.printf("Trigger        0x%X\r\n", trigger);
   Serial_Debug_Port.printf("Running on CORE #%d\r\n", xPortGetCoreID());
   Serial_Debug_Port.printf("Reading %d Samples\r\n", readCount);
 
-  digitalWrite( ledPin, HIGH );
+  digitalWrite( LED_PIN, HIGH );
 
   ESP_LOGD(TAG, "dma_sample_count: %d", s_state->dma_sample_count);
   rle_init();
   start_dma_capture();
 
-  while (! s_state->dma_done )
+  int Timeout = 20; // ~2s
+  while ((! s_state->dma_done ) && (Timeout-- >0)) {
     delay(100);
+  }
+  Serial_Debug_Port.printf("\r\ndma_done:  %s\r\n", s_state->dma_done ? "true" : "false");
 
   yield();
 
-  digitalWrite( ledPin, LOW );
+  digitalWrite( LED_PIN, LOW );
 
   Serial_Debug_Port.printf("ReadCount:  %d\r\n",readCount);
   Serial_Debug_Port.printf("DMA Desc Current: %d\r\n",  s_state->dma_desc_cur);
@@ -285,6 +314,7 @@ void captureMilli() {
   Serial_Debug_Port.printf("used_desc = %d\r\n", filled_desc);
   Serial_Debug_Port.printf("used_sample_offset = %d\r\n", filled_sample_offset);
 
+#ifdef DEBUG_OPERATION_TIMES
   Serial_Debug_Port.printf( "\r\nDMA Times:" );
   for(int i = 0 ; i <  50 ; i++){
     Serial_Debug_Port.printf( "%u\t", time_debug_indice_dma[i]-time_debug_indice_dma[0] );
@@ -294,6 +324,8 @@ void captureMilli() {
   for(int i = 0 ; i <  50 ; i++){
     Serial_Debug_Port.printf( "%u\t", time_debug_indice_rle[i]-time_debug_indice_dma[0] );
     }
+#endif
+
   Serial_Debug_Port.printf( "\r\nDone\r\n" );
   Serial_Debug_Port.flush();
   filled_desc--;
@@ -323,9 +355,10 @@ void captureMilli() {
   if(s_state->dma_desc_triggered < 0){ //if not triggered mode,
     s_state->dma_desc_triggered=0;  //first desc is 0
     ESP_LOGD(TAG, "Normal TX");
-    }
-  else
+  }
+  else {
     ESP_LOGD(TAG, "Triggered TX");
+  }
     
   if(rleEnabled){
     ESP_LOGD(TAG, "RLE TX");
@@ -351,7 +384,7 @@ void captureMilli() {
     for(int i=0; i<32 ; i++){
      Serial_Debug_Port.printf("Processing DMA Desc: %d", i);
      fast_rle_block_encode_asm( (uint8_t*)s_state->dma_buf[i], s_state->dma_buf_width);
-     if( rle_buff_p-rle_buff > rle_size - 4000 )
+     if( rle_buff_p-rle_buff > RLE_SIZE - 4000 )
       break;
      }
 */   
@@ -450,7 +483,7 @@ void captureMilli() {
    else{
     for ( int j = filled_desc; j >= 0 ; j-- ) {
       ESP_LOGD(TAG, "filled_buff trgx = %d", (j + s_state->dma_desc_triggered + s_state->dma_desc_count) % s_state->dma_desc_count);
-      digitalWrite( ledPin, !digitalRead(ledPin) );
+      digitalWrite( LED_PIN, !digitalRead(LED_PIN) );
       //for( int i=s_state->dma_buf_width/4 - 1; i >=0 ; i-- ){
       for ( int i = (j == filled_desc ? filled_sample_offset : filled_full_sample_offset ) ; i >= 0 ; i-- ) {
         //Serial.printf( "%02X %02X ", s_state->dma_buf[j][i].sample1,  s_state->dma_buf[j][i].sample2 );
@@ -481,5 +514,5 @@ brexit:
   //OLS_Port.flush();
   //ESP_LOGD(TAG, "TX_Count: %d", tx_count);
   ESP_LOGD(TAG, "End. TX: %d", tx_count);
-  digitalWrite( ledPin, LOW );
+  digitalWrite( LED_PIN, LOW );
 }

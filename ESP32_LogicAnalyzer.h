@@ -1,4 +1,4 @@
-
+#include <Arduino.h>
 #include <stdint.h>
 #include "soc/i2s_struct.h"
 #include "config.h"
@@ -10,12 +10,45 @@
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
-
+#include <HardwareSerial.h>
 #include "driver/ledc.h"
 
-#define USE_SERIAL2_FOR_OLS 1 // If 1, UART2 = OLS and UART0=Debug
+#undef DEBUG_OPERATION_TIMES              // If defined, print times for DMA and RLE operations
 
-#define ALLOW_ZERO_RLE 0
+#define USE_SERIAL2_FOR_OLS   0           // If 1, UART2 = OLS and UART0=Debug; else, UART0 = OLS and UART2=Debug
+#define ALLOW_ZERO_RLE        1           // Enable RLE on data.
+#define CAPTURE_SIZE          128000
+#ifdef DEBUG_OPERATION_TIMES
+#define RLE_SIZE              92000
+#else
+#define RLE_SIZE              96000
+#endif
+
+// PIN Definitions for DEVKITC_V4
+#define LED_PIN               2           //Led on while running and Blinks while transfering data.
+#define CLK_PIN               0
+
+#define D01_PIN               13    // GPIO
+#define D02_PIN               12    // GPIO
+#define D03_PIN               14    // GPIO
+#define D04_PIN               27    // GPIO
+#define D05_PIN               26    // GPIO
+#define D06_PIN               25    // GPIO
+#define D07_PIN               33    // GPIO
+#define D08_PIN               32    // GPIO
+#define D09_PIN                5    // SS
+#define D10_PIN               18    // CLK
+#define D11_PIN               23    // MOSI
+#define D12_PIN               19    // MISO
+#define D13_PIN               22    // SCL1
+#define D14_PIN               21    // SDA1
+#define D15_PIN                4    // RTC-10
+#define D16_PIN               15    // RTC-13
+
+#define A01_PIN               35    // ADC1-7
+#define A02_PIN               34    // ADC1-6
+#define A03_PIN               39    // ADC1-3
+#define A04_PIN               36    // ADC1-0
 
  /// ALLOW_ZERO_RLE 1 is Fast mode.
  //Add RLE Count 0 to RLE stack for non repeated values and postpone the RLE processing so faster.
@@ -27,48 +60,45 @@
  // 8Bit Mode : ~34.7k clock per 4k block, captures 4700us while inspecting ~10Mhz clock at 20Mhz mode
  //16Bit Mode : ~30.3k clock per 4k block, captures 2400us while inspecting ~10Mhz clock at 20Mhz mode
 
-#define CAPTURE_SIZE 128000
-//#define CAPTURE_SIZE 12000
-#define rle_size 96000
+#define RXD2 16
+#define TXD2 17
 
-#define ledPin 21 //Led on while running and Blinks while transfering data.
-
+// If 1, UART2 = OLS and UART0=Debug
+// else, UART0 = OLS and UART2=Debug
 #if USE_SERIAL2_FOR_OLS
-
 #define Serial_Debug_Port Serial
 //#define Serial_Debug_Port_Baud 115200
 #define Serial_Debug_Port_Baud 921600
 //#define Serial_Debug_Port_Baud 1000000
 #define OLS_Port Serial2
 #define OLS_Port_Baud 3000000
-
 #else
-
 #define Serial_Debug_Port Serial2
-#define Serial_Debug_Port_Baud 921600
+#define Serial_Debug_Port_Baud 115200
 #define OLS_Port Serial
 #define OLS_Port_Baud 921600
-
 #endif
 
+#ifdef DEBUG_OPERATION_TIMES
 unsigned int time_debug_indice_dma[1024];
 unsigned int time_debug_indice_dma_p=0;
 
 unsigned int time_debug_indice_rle[1024];
 unsigned int time_debug_indice_rle_p=0;
+#endif
 
-int stop_at_desc=-1;
-unsigned int logicIndex = 0;
-unsigned int triggerIndex = 0;
-uint32_t readCount = CAPTURE_SIZE;
-unsigned int delayCount = 0;
-uint16_t trigger = 0;
-uint16_t trigger_values = 0;
-unsigned int useMicro = 0;
-unsigned int delayTime = 0;
-unsigned long divider = 0;
-boolean rleEnabled = 0;
-uint32_t clock_per_read = 0;
+int               stop_at_desc=-1;
+unsigned int      logicIndex = 0;
+unsigned int      triggerIndex = 0;
+uint32_t          readCount = CAPTURE_SIZE;
+unsigned int      delayCount = 0;
+uint16_t          trigger = 0;
+uint16_t          trigger_values = 0;
+unsigned int      useMicro = 0;
+unsigned int      delayTime = 0;
+unsigned long     divider = 0;
+bool              rleEnabled = 0;
+uint32_t          clock_per_read = 0;
 
 typedef enum {
   I2S_PARALLEL_BITS_8   = 8,
@@ -202,7 +232,7 @@ uint8_t channels_to_read=3;
 #define MAX_CAPTURE_SIZE CAPTURE_SIZE
 
 int8_t rle_process=-1;
-uint8_t rle_buff [rle_size];
+uint8_t rle_buff [RLE_SIZE];
 uint8_t* rle_buff_p;
 uint8_t* rle_buff_end;
 uint8_t rle_sample_counter;
@@ -217,9 +247,11 @@ bool rle_init(void){
   rle_process=-1;
   
   rle_buff_p=rle_buff;
-  rle_buff_end = rle_buff+rle_size-4;
+  rle_buff_end = rle_buff+RLE_SIZE-4;
 
-  memset( rle_buff, 0x00, rle_size);
+  memset( rle_buff, 0x00, RLE_SIZE);
+  
+  return true;
 }
 
 void dma_serializer( dma_elem_t *dma_buffer ){
@@ -231,7 +263,8 @@ void dma_serializer( dma_elem_t *dma_buffer ){
 }
 void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka=0;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -390,7 +423,9 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
 
       
     clockb = xthal_get_ccount();
+#ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_rle[time_debug_indice_rle_p++]=clockb;
+#endif
  //   Serial_Debug_Port.printf("\r\n asm_process takes %d clocks\r\n",(clockb-clocka));
  //   Serial_Debug_Port.printf( "RX  Buffer = %d bytes\r\n", sample_size );
  //   Serial_Debug_Port.printf( "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
@@ -400,7 +435,8 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
 
 void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -559,7 +595,9 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
 
       
     clockb = xthal_get_ccount();
+#ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_rle[time_debug_indice_rle_p++]=clockb;
+#endif
  //   Serial_Debug_Port.printf("\r\n asm_process takes %d clocks\r\n",(clockb-clocka));
  //   Serial_Debug_Port.printf( "RX  Buffer = %d bytes\r\n", sample_size );
  //   Serial_Debug_Port.printf( "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
@@ -569,7 +607,8 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
 
 void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
-   unsigned clocka=0,clockb=0;
+   unsigned clocka;
+   unsigned clockb=0;
 
    /* We have to encode RLE samples quick.
     * Each sample need to be encoded under 12 clocks @240Mhz CPU 
@@ -692,7 +731,9 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
       :"a"(&dma_buffer), "a"(dword_count), "a"(&rle_buff_p):
       "a4","a5","a6","a7","a8","a9","a10","a11","memory");
     clockb = xthal_get_ccount();
+#ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_rle[time_debug_indice_rle_p++]=clockb;
+#endif
 
 //    delay(10);
 
