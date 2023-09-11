@@ -1,6 +1,8 @@
+/*jma
 static void IRAM_ATTR i2s_trigger_isr(void) {
   //I2S0.conf.rx_start = 1;
 }
+*/
 
 void start_dma_capture(void) {
   s_state->dma_done = false;
@@ -61,31 +63,34 @@ uint16_t buff_process_trigger_1(uint16_t *buff, int size, bool printit=true){
   uint16_t a = 0;
   for(int i=0 ; i < size/2 ; i+=2)
   a |= buff[i];
-  if(printit)
+  if(printit) {
     ESP_LOGD(TAG, "Process trigger 1: 0x%X", a);
+  }
   return a;
+}
 }
 
 uint16_t buff_process_trigger_0(uint16_t *buff, int size, bool printit=true){
   uint16_t a = 0xFF;
   for(int i=0 ; i < size/2 ; i+=2)
   a &= buff[i];
-  if(printit)
+  if(printit) {
     ESP_LOGD(TAG, "Process trigger 0: 0x%X", a);
+  }
   return a;
 }
 static void IRAM_ATTR i2s_isr(void* arg) {
   if(trigger==0){
     ESP_LOGD(TAG, "DMA INT Number %d Status 0x%x", s_state->dma_desc_cur, I2S0.int_raw.val );
   
-  /*
-  ESP_LOGD(TAG, "DMA INT take_data? %d", I2S0.int_raw.rx_take_data );
-  ESP_LOGD(TAG, "DMA INT in_dscr_empty? %d", I2S0.int_raw.in_dscr_empty );
-  ESP_LOGD(TAG, "DMA INT in_done? %d", I2S0.int_raw.in_done );
-  ESP_LOGD(TAG, "DMA INT in_suc_eof? %d", I2S0.int_raw.in_suc_eof );
-  ESP_LOGD(TAG, "DMA INT rx_rempty? %d", I2S0.int_raw.rx_rempty );
-  ESP_LOGD( "\r\n" );
-  */
+
+//  ESP_LOGD(TAG, "DMA INT take_data? %d", I2S0.int_raw.rx_take_data );
+//  ESP_LOGD(TAG, "DMA INT in_dscr_empty? %d", I2S0.int_raw.in_dscr_empty );
+//  ESP_LOGD(TAG, "DMA INT in_done? %d", I2S0.int_raw.in_done );
+//  ESP_LOGD(TAG, "DMA INT in_suc_eof? %d", I2S0.int_raw.in_suc_eof );
+//  ESP_LOGD(TAG, "DMA INT rx_rempty? %d", I2S0.int_raw.rx_rempty );
+//  ESP_LOGD( "\r\n" );
+
   
   //ESP_LOGD(TAG, "Executing DMA ISR on core %d", xPortGetCoreID() );
   }
@@ -194,6 +199,7 @@ static void dma_desc_deinit(){
     free(s_state->dma_buf);
     free(s_state->dma_desc);
 }
+*/
 
 static esp_err_t dma_desc_init(int raw_byte_size){
     s_state = (camera_state_t*) malloc (sizeof(camera_state_t));
@@ -333,8 +339,6 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
   // Enable and configure I2S peripheral
   periph_module_enable(PERIPH_I2S0_MODULE);
   
-  
-  
   //Initialize I2S dev
   // Toggle some reset bits in LC_CONF register
   // Toggle some reset bits in CONF register
@@ -358,7 +362,6 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
 
   I2S0.clkm_conf.clka_en = 0;    // select PLL_D2_CLK. Digital Multiplexer that select between APLL_CLK or PLL_D2_CLK.
   //I2S0.clkm_conf.clk_en = 1;
-  
   
   I2S0.clkm_conf.clkm_div_a = 1;
   I2S0.clkm_conf.clkm_div_b = 0;
@@ -405,6 +408,8 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
 
   //Allocate DMA descriptors
   i2s_state[0] = (i2s_parallel_state_t*)malloc(sizeof(i2s_parallel_state_t));
+  
+  /*jma
   i2s_parallel_state_t *st = i2s_state[0];
   s_state->dma_done = false;
   s_state->dma_desc_cur = 0;
@@ -431,6 +436,7 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
   
 //  I2S0.conf.rx_start = 1;
 }
+
 
 static void enable_out_clock( int freq_in_hz ) {
     ledcSetup(0, freq_in_hz, 1);

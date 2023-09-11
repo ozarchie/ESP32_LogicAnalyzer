@@ -277,7 +277,7 @@ void setupDelay() {
 }
 
 void captureMilli() {
-  uint32_t a, b, c, d;
+//jma  uint32_t a, b, c, d;
   Serial_Debug_Port.printf("FreeHeap         :%u\r\n", ESP.getFreeHeap());
   Serial_Debug_Port.printf("FreeHeap 64 Byte :%u\r\n", heap_caps_get_largest_free_block(64) );
   Serial_Debug_Port.printf("Trigger Values 0x%X\r\n", trigger_values);
@@ -288,6 +288,7 @@ void captureMilli() {
   digitalWrite( LED_PIN, HIGH );
 
   ESP_LOGD(TAG, "dma_sample_count: %d", s_state->dma_sample_count);
+  
   rle_init();
   start_dma_capture();
 
@@ -357,7 +358,10 @@ void captureMilli() {
     ESP_LOGD(TAG, "Normal TX");
   }
   else {
+  }
+  else {
     ESP_LOGD(TAG, "Triggered TX");
+  }
   }
     
   if(rleEnabled){
@@ -391,7 +395,7 @@ void captureMilli() {
 
     if( channels_to_read == 3 )
     {
-      int a=0;
+//jma      int a=0;
       Serial_Debug_Port.printf("Debug RLE BUFF:" );
       for( int i=0; i <50 ; i++){
         Serial_Debug_Port.printf("0x%X ", rle_buff[i] );
