@@ -1,3 +1,5 @@
+#include "ESP32_LogicAnalyzer.h"
+
 static void IRAM_ATTR i2s_trigger_isr(void) {
   //I2S0.conf.rx_start = 1;
 }
@@ -26,7 +28,7 @@ time_debug_indice_dma[i]=time_debug_indice_rle[i]=0;
   I2S0.int_ena.val = 0;
   I2S0.int_ena.in_done = 1;
 
-  ESP_LOGD(TAG, "DMA Tigger : 0x%X", trigger );
+  ESP_LOGD(TAG, "DMA Trigger : 0x%X", trigger );
   if (trigger || rleEnabled) {
     stop_at_desc = -1;
     I2S0.rx_eof_num = s_state->dma_buf_width;
@@ -295,7 +297,6 @@ void i2s_conf_reset(){
   }
 
 void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
-
   //Figure out which signal numbers to use for routing
   ESP_LOGI(TAG, "Setting up parallel I2S bus at I2S%d\n", 0);
   int sig_data_base, sig_clk;
@@ -352,13 +353,36 @@ void i2s_parallel_setup(const i2s_parallel_config_t *cfg) {
   // Use HSYNC/VSYNC/HREF to control sampling
   I2S0.conf2.camera_en = 1;
 
+/*
+    union {
+        struct {
+            uint32_t clkm_div_num: 8;                   /*Integral I2S clock divider value
+            uint32_t clkm_div_b:   6;                   /*Fractional clock divider numerator value
+            uint32_t clkm_div_a:   6;                   /*Fractional clock divider denominator value
+            uint32_t clk_en:       1;                   /*Set this bit to enable clk gate
+            uint32_t clk_sel:      2;                   /*Set this bit to enable clk_apll
+            uint32_t reserved23:   9;
+        };
+        uint32_t val;
+    } clkm_conf;
+*/
   // f i2s = fpll / (Num + b/a )) where fpll=80Mhz
   // Configure clock divider
   I2S0.clkm_conf.val = 0;
 
+#if (BOARD_esp32dev == 1)
+// ESP32
+// I2S_CLKA_ENA
+//  Set this bit to enable APLL_CLK. Default is PLL_F160M_CLK. (R/W)
   I2S0.clkm_conf.clka_en = 0;    // select PLL_D2_CLK. Digital Multiplexer that select between APLL_CLK or PLL_D2_CLK.
-  //I2S0.clkm_conf.clk_en = 1;
-  
+//I2S0.clkm_conf.clk_en = 1;
+#else
+// ESP32S2
+// I2S_CLK_SEL 
+// Set these bits to select I2S module clock source:
+//    0: No clock. 1: APLL_CLK. 2:PLL_160M_CLK. 3: No clock. (R/W)
+  I2S0.clkm_conf.clk_sel = 2;
+#endif
   
   I2S0.clkm_conf.clkm_div_a = 1;
   I2S0.clkm_conf.clkm_div_b = 0;

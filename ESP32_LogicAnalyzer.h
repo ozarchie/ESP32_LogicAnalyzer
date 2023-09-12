@@ -1,3 +1,5 @@
+#pragma once
+
 #include <Arduino.h>
 #include <stdint.h>
 #include "soc/i2s_struct.h"
@@ -12,12 +14,38 @@
 #include "esp_task_wdt.h"
 #include <HardwareSerial.h>
 #include "driver/ledc.h"
+#include "Vrekrer_scpi_parser.h"
 
-#define DEBUG_OPERATION_TIMES              // If defined, print times for DMA and RLE operations
+void start_dma_capture(void);
+static esp_err_t dma_desc_init(int );
+static void enable_out_clock(int );
+void captureMilli(void);
 
-#define USE_SERIAL2_FOR_OLS   0           // If 1, UART2 = OLS and UART0=Debug; else, UART0 = OLS and UART2=Debug
-#define ALLOW_ZERO_RLE        1           // Enable RLE on data.
+// SUMP
+// ====
+void sumpCommand(void);
+void sumpMetadata(void);
+
+// SCPI
+// ====
+#define SCPI_HASH_TYPE uint8_t //Default value = uint8_t
+SCPI_Parser lascpi;
+
+// Configuration
+// =============
+#define BOARD_esp32dev 1
+//#define BOARD_esp32s2 1
+#ifdef BOARD_esp32s2
+#define LOOPNEZS2 0                         // ESP32S2 loopnez problem
+#endif
+
+#undef DEBUG_OPERATION_TIMES              // If defined, print times for DMA and RLE operations
+
+#define USE_SERIAL2_FOR_OLS   1           // If 1, UART2 = OLS and UART0=Debug; else, UART0 = OLS and UART2=Debug
+/* XON/XOFF are not supported. */
+#define ALLOW_ZERO_RLE        0           // Enable RLE on data.
 #define CAPTURE_SIZE          128000
+#define DMA_MAX               (4096-4)
 #ifdef DEBUG_OPERATION_TIMES
 #define RLE_SIZE              92000
 #else
@@ -62,21 +90,25 @@
 
 #define RXD2 16
 #define TXD2 17
+#if BOARD_esp32s2
+HardwareSerial Serial2(2);
+#define Serial Serial0
+#endif                                                                          
 
 // If 1, UART2 = OLS and UART0=Debug
 // else, UART0 = OLS and UART2=Debug
 #if USE_SERIAL2_FOR_OLS
 #define Serial_Debug_Port Serial
-//#define Serial_Debug_Port_Baud 115200
-#define Serial_Debug_Port_Baud 921600
-//#define Serial_Debug_Port_Baud 1000000
+#define Serial_Debug_Port_Baud 115200
+//#define Serial_Debug_Port_Baud 921600
 #define OLS_Port Serial2
-#define OLS_Port_Baud 3000000
+#define OLS_Port_Baud 115200
+//#define OLS_Port_Baud 3000000
 #else
 #define Serial_Debug_Port Serial2
 #define Serial_Debug_Port_Baud 115200
 #define OLS_Port Serial
-#define OLS_Port_Baud 921600
+#define OLS_Port_Baud 115200
 #endif
 
 #ifdef DEBUG_OPERATION_TIMES
@@ -87,18 +119,18 @@ unsigned int time_debug_indice_rle[1024];
 unsigned int time_debug_indice_rle_p=0;
 #endif
 
-int               stop_at_desc=-1;
-unsigned int      logicIndex = 0;
-unsigned int      triggerIndex = 0;
-uint32_t          readCount = CAPTURE_SIZE;
-unsigned int      delayCount = 0;
-uint16_t          trigger = 0;
-uint16_t          trigger_values = 0;
-unsigned int      useMicro = 0;
-unsigned int      delayTime = 0;
-unsigned long     divider = 0;
-bool              rleEnabled = 0;
-uint32_t          clock_per_read = 0;
+int               stop_at_desc      = -1;
+unsigned int      logicIndex        = 0;
+unsigned int      triggerIndex      = 0;
+uint32_t          readCount         = CAPTURE_SIZE;
+unsigned int      delayCount        = 0;
+uint16_t          trigger           = 0;
+uint16_t          trigger_values    = 0;
+unsigned int      useMicro          = 0;
+unsigned int      delayTime         = 0;
+unsigned long     divider           = 0;
+bool              rleEnabled        = 0;
+uint32_t          clock_per_read    = 0;
 
 typedef enum {
   I2S_PARALLEL_BITS_8   = 8,
@@ -110,6 +142,7 @@ typedef struct {
   void* memory;
   size_t size;
 } i2s_parallel_buffer_desc_t;
+i2s_parallel_buffer_desc_t bufdesc;
 
 typedef struct {
   int gpio_bus[24];
@@ -118,17 +151,14 @@ typedef struct {
   i2s_parallel_cfg_bits_t bits;
   i2s_parallel_buffer_desc_t* buf;
 } i2s_parallel_config_t;
+i2s_parallel_config_t cfg;
+void i2s_parallel_setup( const i2s_parallel_config_t *cfg);
 
 typedef struct {
   volatile lldesc_t* dmadesc;
   int desccount;
 } i2s_parallel_state_t;
-
 static i2s_parallel_state_t* i2s_state[2] = {NULL, NULL};
-
-#define DMA_MAX (4096-4)
-
-
 
 //Calculate the amount of dma descs needed for a buffer desc
 static int calc_needed_dma_descs_for(i2s_parallel_buffer_desc_t *desc) {
@@ -185,18 +215,16 @@ typedef struct {
 //    SemaphoreHandle_t frame_ready;
 //    TaskHandle_t dma_filter_task;
 } camera_state_t;
-
 camera_state_t *s_state;
 
-void i2s_parallel_setup( const i2s_parallel_config_t *cfg);
-
-
-#define USE_TX2_FOR_OLS
-
 #define CHANPIN GPIO.in
-
 uint8_t channels_to_read=3;
-/* XON/XOFF are not supported. */
+/*
+SUMP Protocol Definitions
+=========================
+
+
+*/
 #define SUMP_RESET 0x00
 #define SUMP_ARM   0x01
 #define SUMP_QUERY 0x02
@@ -204,35 +232,35 @@ uint8_t channels_to_read=3;
 #define SUMP_XOFF  0x13
 
 /* mask & values used, config ignored. only stage0 supported */
-#define SUMP_TRIGGER_MASK_CH_A 0xC0
-#define SUMP_TRIGGER_MASK_CH_B 0xC4
-#define SUMP_TRIGGER_MASK_CH_C 0xC8
-#define SUMP_TRIGGER_MASK_CH_D 0xCC
+#define SUMP_TRIGGER_MASK_CH_A      0xC0
+#define SUMP_TRIGGER_MASK_CH_B      0xC4
+#define SUMP_TRIGGER_MASK_CH_C      0xC8
+#define SUMP_TRIGGER_MASK_CH_D      0xCC
 
-#define SUMP_TRIGGER_VALUES_CH_A 0xC1
-#define SUMP_TRIGGER_VALUES_CH_B 0xC5
-#define SUMP_TRIGGER_VALUES_CH_C 0xC9
-#define SUMP_TRIGGER_VALUES_CH_D 0xCD
+#define SUMP_TRIGGER_VALUES_CH_A    0xC1
+#define SUMP_TRIGGER_VALUES_CH_B    0xC5
+#define SUMP_TRIGGER_VALUES_CH_C    0xC9
+#define SUMP_TRIGGER_VALUES_CH_D    0xCD
 
-#define SUMP_TRIGGER_CONFIG_CH_A 0xC2
-#define SUMP_TRIGGER_CONFIG_CH_B 0xC6
-#define SUMP_TRIGGER_CONFIG_CH_C 0xCA
-#define SUMP_TRIGGER_CONFIG_CH_D 0xCE
+#define SUMP_TRIGGER_CONFIG_CH_A    0xC2
+#define SUMP_TRIGGER_CONFIG_CH_B    0xC6
+#define SUMP_TRIGGER_CONFIG_CH_C    0xCA
+#define SUMP_TRIGGER_CONFIG_CH_D    0xCE
 
 /* Most flags (except RLE) are ignored. */
-#define SUMP_SET_DIVIDER 0x80
-#define SUMP_SET_READ_DELAY_COUNT 0x81
-#define SUMP_SET_FLAGS 0x82
-#define SUMP_SET_RLE 0x0100
+#define SUMP_SET_DIVIDER            0x80
+#define SUMP_SET_READ_DELAY_COUNT   0x81
+#define SUMP_SET_FLAGS              0x82
+#define SUMP_SET_RLE                0x0100
 
 /* extended commands -- self-test unsupported, but metadata is returned. */
-#define SUMP_SELF_TEST 0x03
-#define SUMP_GET_METADATA 0x04
+#define SUMP_SELF_TEST              0x03
+#define SUMP_sumpMetadata           0x04
 
-#define MAX_CAPTURE_SIZE CAPTURE_SIZE
+#define MAX_CAPTURE_SIZE            CAPTURE_SIZE
 
 int8_t rle_process=-1;
-uint8_t rle_buff [RLE_SIZE];
+uint8_t rle_buff[RLE_SIZE];
 uint8_t* rle_buff_p;
 uint8_t* rle_buff_end;
 uint8_t rle_sample_counter;
@@ -245,12 +273,9 @@ bool rle_init(void){
   rle_total_sample_counter=0;
   rle_value_holder=0;
   rle_process=-1;
-  
   rle_buff_p=rle_buff;
   rle_buff_end = rle_buff+RLE_SIZE-4;
-
   memset( rle_buff, 0x00, RLE_SIZE);
-  
   return true;
 }
 
@@ -261,25 +286,25 @@ void dma_serializer( dma_elem_t *dma_buffer ){
      dma_buffer[i].sample1 = y;
    }
 }
+
 void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
    unsigned clocka=0;
    unsigned clockb=0;
 
-   /* We have to encode RLE samples quick.
-    * Each sample need to be encoded under 12 clocks @240Mhz CPU 
-    * for capture 20Mhz sampling speed.
+   /* We have to encode RLE samples quickly.
+    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
+    * for 20Mhz capture sampling speed.
     */
 
    /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
     * actual data structure of DMA memory : 00s2,00s1,00s4,00s3
     */
     
-   int dword_count=(sample_size/4) -1;
-   
+   int dword_count=(sample_size/4) -1;   
    clocka = xthal_get_ccount();
    
-   /* No, Assembly is not that hard. You are just too lazzy. */
+   /* Assembly is not that hard. */
 
     __asm__ __volatile__(
       "memw \n"
@@ -307,7 +332,9 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
             
       "rle_0:                \n"
       "addi a5, a5, 1        \n" // rle_counter++
+#if not LOOPNEZS2
 "loopnez %1, rle_loop_end    \n" // Prepare zero-overhead loop
+#endif
       "loopStart:            \n"
       "addi a4, a4, 4        \n" // increase dma_buffer_p pointer by 4
 
@@ -421,7 +448,6 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
       :"a"(&dma_buffer), "a"(dword_count), "a"(&rle_buff_p):
       "a4","a5","a6","a7","a8","a9","a10","a11","memory");
 
-      
     clockb = xthal_get_ccount();
 #ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_rle[time_debug_indice_rle_p++]=clockb;
@@ -430,7 +456,6 @@ void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ /
  //   Serial_Debug_Port.printf( "RX  Buffer = %d bytes\r\n", sample_size );
  //   Serial_Debug_Port.printf( "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
     ESP_LOGD(TAG, "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
-
 }
 
 void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ //size, not count
@@ -438,9 +463,9 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
    unsigned clocka;
    unsigned clockb=0;
 
-   /* We have to encode RLE samples quick.
-    * Each sample need to be encoded under 12 clocks @240Mhz CPU 
-    * for capture 20Mhz sampling speed.
+   /* We have to encode RLE samples quickly.
+    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
+    * for 20Mhz capture sampling speed.
     */
 
    /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
@@ -448,10 +473,7 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
     */
     
    int dword_count=(sample_size/4) -1;
-   
    clocka = xthal_get_ccount();
-   
-   /* No, Assembly is not that hard. You are just too lazzy. */
 
     __asm__ __volatile__(
       "memw \n"
@@ -479,7 +501,9 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
             
       "rle_0_ch2:            \n"
       "addi a5, a5, 1        \n" // rle_counter++
+#if not LOOPNEZS2
 "loopnez %1, rle_loop_end_ch2    \n" // Prepare zero-overhead loop
+#endif
       "loopStart_ch2:            \n"
       "addi a4, a4, 4        \n" // increase dma_buffer_p pointer by 4
 
@@ -593,7 +617,6 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
       :"a"(&dma_buffer), "a"(dword_count), "a"(&rle_buff_p):
       "a4","a5","a6","a7","a8","a9","a10","a11","memory");
 
-      
     clockb = xthal_get_ccount();
 #ifdef DEBUG_OPERATION_TIMES
     time_debug_indice_rle[time_debug_indice_rle_p++]=clockb;
@@ -602,7 +625,6 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
  //   Serial_Debug_Port.printf( "RX  Buffer = %d bytes\r\n", sample_size );
  //   Serial_Debug_Port.printf( "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
     ESP_LOGD(TAG, "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
-
 }
 
 void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //size, not count
@@ -610,9 +632,9 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
    unsigned clocka;
    unsigned clockb=0;
 
-   /* We have to encode RLE samples quick.
-    * Each sample need to be encoded under 12 clocks @240Mhz CPU 
-    * for capture 20Mhz sampling speed.
+   /* We have to encode RLE samples quickly.
+    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
+    * for 20Mhz capture sampling speed.
     */
 
    /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
@@ -620,10 +642,7 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
     */
     
    int dword_count=(sample_size/4) -1;
-   
    clocka = xthal_get_ccount();
-   
-   /* No, Assembly is not that hard. You are just too lazzy. */
    
     __asm__ __volatile__(
       "l32i a4, %0, 0        \n" // Load store dma_buffer address
@@ -651,7 +670,9 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
 
       "rle_0_16:             \n"
       "addi a5, a5, 1        \n" // rle_counter++
+#if not LOOPNEZS2
 "loopnez %1, rle_loop_end_16 \n" // Prepare zero-overhead loop
+#endif
       "loopStart_16:         \n"
       "addi a4, a4, 4        \n" // increase dma_buffer_p pointer by 4
 
@@ -736,16 +757,14 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
 #endif
 
 //    delay(10);
-
     //Serial_Debug_Port.printf("\r\n asm_process takes %d clocks\r\n",(clockb-clocka));
     //Serial_Debug_Port.printf( "RX  Buffer = %d bytes\r\n", sample_size );
     //Serial_Debug_Port.printf( "RLE Buffer = %d bytes\r\n", (rle_buff_p - rle_buff) );
-    
 
 /*
     Serial_Debug_Port.printf("RLE Block Output:\r\n");
     for(int i=0; i < sample_size/40 ; i++ )
       Serial_Debug_Port.printf("0x%X, ", rle_buff[i]);
     Serial_Debug_Port.println();
-    */
+*/
 }

@@ -23,13 +23,11 @@
  *  https://github.com/igrr/esp32-cam-demo for I2S DMA
  *  and
  *  https://github.com/gillham/logic_analyzer/issues for SUMP protocol as template.
+ *  http://dangerousprototypes.com/docs/The_Logic_Sniffer%27s_extended_SUMP_protocol
  * 
  */ 
 static const char* TAG = "ESP32_LogicAnalyzer";
 #include "ESP32_LogicAnalyzer.h"
-
-i2s_parallel_buffer_desc_t bufdesc;
-i2s_parallel_config_t cfg;
 
 void setup(void) {
   Serial_Debug_Port.begin(Serial_Debug_Port_Baud, SERIAL_8N1, RXD2, TXD2);
@@ -48,7 +46,7 @@ void setup(void) {
 //*/
  
   pinMode(LED_PIN, OUTPUT);
-  Serial_Debug_Port.printf("\r\nESP32 Logic Sniffer V1.01\r\n");
+  Serial_Debug_Port.printf("\r\nESP32 Logic Sniffer V23.09.11\r\n");
   Serial_Debug_Port.printf("Initial boot ..\r\n");
   dma_desc_init(CAPTURE_SIZE);
 
@@ -91,13 +89,8 @@ void setup(void) {
   i2s_parallel_setup(&cfg);
 }
 
-void captureMilli(void);
-void getCmd(void);
-void blinkled(void);
-void get_metadata(void);
-
-int cmdByte = 0;
-byte cmdBytes[5];
+int sumpCmnd = 0;
+byte sumpCmnds[5];
 
 void loop()
 {
@@ -108,41 +101,43 @@ void loop()
   while (1) {
     if (OLS_Port.available() > 0) {
       z = OLS_Port.available();
-      cmdByte = OLS_Port.read();
-      Serial_Debug_Port.printf("CMD: 0x%02X\r\n", cmdByte);
+      sumpCmnd = OLS_Port.read();
+      Serial_Debug_Port.printf("CMD: 0x%02X\r\n", sumpCmnd);
       chan_num = 0;
-      switch (cmdByte) {
+      switch (sumpCmnd) {
         case SUMP_RESET:
           break;
         case SUMP_QUERY:
           OLS_Port.print(F("1ALS"));    Serial_Debug_Port.print(F("1ALS"));
-         // OLS_Port.write("1ALS");
-          Serial_Debug_Port.printf("1ALS\r\n");
-          //OLS_Port.print(F("1SLO"));
           break;
         case SUMP_ARM:
           captureMilli();
           break;
         case SUMP_TRIGGER_MASK_CH_A:
-          getCmd();
-          trigger = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
-          if (trigger) {
+          sumpCommand();
+          trigger = ((uint16_t)sumpCmnds[1] << 8 ) | sumpCmnds[0];
+          if (trigger != 0) {
             Serial_Debug_Port.printf("Trigger Set for inputs : ");
-            for ( int i = 0; i < 16 ; i++ )
-              if (( trigger >> i) & 0x1 )
-                Serial_Debug_Port.printf("%d,  ", i );
+            for ( int i = 0; i < 16 ; i++ ) {
+              if (( trigger >> i) & 0x0001 )
+                Serial_Debug_Port.printf("%02d, ", i );
+              else
+                Serial_Debug_Port.printf("--, ");
+            }
             Serial_Debug_Port.println();
           }
           break;
         case SUMP_TRIGGER_VALUES_CH_A:
-          getCmd();
-
-          trigger_values = ((uint16_t)cmdBytes[1] << 8 ) | cmdBytes[0];
+          sumpCommand();
+          trigger_values = ((uint16_t)sumpCmnds[1] << 8 ) | sumpCmnds[0];
           if (trigger) {
             Serial_Debug_Port.printf("Trigger Val for inputs : ");
-            for ( int i = 0; i < 16 ; i++ )
-              if (( trigger >> i) & 0x1 )
-                Serial_Debug_Port.printf("%C,  ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
+            for ( int i = 0; i < 16 ; i++ ) {
+              if (( trigger >> i) & 0x0001 )
+                Serial_Debug_Port.printf("%C, ", (( trigger_values >> i ) & 0x1 ? 'H' : 'L') );
+              else 
+                Serial_Debug_Port.printf("X, ");
+            }
             Serial_Debug_Port.println();
           }
           break;
@@ -157,78 +152,119 @@ void loop()
         case SUMP_TRIGGER_CONFIG_CH_B:
         case SUMP_TRIGGER_CONFIG_CH_C:
         case SUMP_TRIGGER_CONFIG_CH_D:
-          getCmd();
+          sumpCommand();
           /*
              No config support
           */
           break;
         case SUMP_SET_DIVIDER:
           /*
-               the shifting needs to be done on the 32bit unsigned long variable
+            the shifting needs to be done on the 32bit unsigned long variable
              so that << 16 doesn't end up as zero.
           */
-          getCmd();
-          divider = cmdBytes[2];
+          sumpCommand();
+          divider = sumpCmnds[2];
           divider = divider << 8;
-          divider += cmdBytes[1];
+          divider += sumpCmnds[1];
           divider = divider << 8;
-          divider += cmdBytes[0];
+          divider += sumpCmnds[0];
           setupDelay();
           break;
         case SUMP_SET_READ_DELAY_COUNT:
-          getCmd();
-          readCount = 4 * (((cmdBytes[1] << 8) | cmdBytes[0]) + 1);
+          sumpCommand();
+          readCount = 4 * (((sumpCmnds[1] << 8) | sumpCmnds[0]) + 1);
           if (readCount > MAX_CAPTURE_SIZE)
             readCount = MAX_CAPTURE_SIZE;
-          delayCount = 4 * (((cmdBytes[3] << 8) | cmdBytes[2]) + 1);
+          delayCount = 4 * (((sumpCmnds[3] << 8) | sumpCmnds[2]) + 1);
           if (delayCount > MAX_CAPTURE_SIZE)
             delayCount = MAX_CAPTURE_SIZE;
           break;
 
         case SUMP_SET_FLAGS:
-          getCmd();
-          rleEnabled = cmdBytes[1] & 0x1;
+          sumpCommand();
+          rleEnabled = sumpCmnds[1] & 0x1;
           if (rleEnabled)
-            Serial_Debug_Port.println("RLE Compression enable");
+            Serial_Debug_Port.println("RLE Compression enabled");
           else
             Serial_Debug_Port.println("Non-RLE Operation enable");
-
-          Serial_Debug_Port.printf("Demux %c\r\n", cmdBytes[0] & 0x01 ? 'Y' : 'N');
-          Serial_Debug_Port.printf("Filter %c\r\n", cmdBytes[0] & 0x02 ? 'Y' : 'N');
-          channels_to_read = (~(cmdBytes[0] >> 2) & 0x0F);
+          Serial_Debug_Port.printf("Demux  %c\r\n", sumpCmnds[0] & 0x01 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("Filter %c\r\n", sumpCmnds[0] & 0x02 ? 'Y' : 'N');
+          channels_to_read = (~(sumpCmnds[0] >> 2) & 0x0F);
           Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
           if(channels_to_read == 3)
-          Serial_Debug_Port.printf("External Clock %c\r\n", cmdBytes[0] & 0x40 ? 'Y' : 'N');
-          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", cmdBytes[0] & 0x80 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("External Clock %c\r\n", sumpCmnds[0] & 0x40 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", sumpCmnds[0] & 0x80 ? 'Y' : 'N');
           break;
-        case SUMP_GET_METADATA:
-          get_metadata();
+        case SUMP_sumpMetadata:
+          sumpMetadata();
           break;
         case SUMP_SELF_TEST:
           break;
         default:
-          Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", cmdByte );
-          getCmd();
+          Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", sumpCmnd );
+          sumpCommand();
           break;
       }
     }
   }
 }
 
-void getCmd() {
+void sumpCommand() {
   delay(10);
-  cmdBytes[0] = OLS_Port.read();
-  cmdBytes[1] = OLS_Port.read();
-  cmdBytes[2] = OLS_Port.read();
-  cmdBytes[3] = OLS_Port.read();
+  sumpCmnds[0] = OLS_Port.read();
+  sumpCmnds[1] = OLS_Port.read();
+  sumpCmnds[2] = OLS_Port.read();
+  sumpCmnds[3] = OLS_Port.read();
   Serial_Debug_Port.printf("CMDs ");
   for (int q = 0; q < 4; q++) {
-    Serial_Debug_Port.printf(" 0x%02X", cmdBytes[q]);
+    Serial_Debug_Port.printf(" 0x%02X", sumpCmnds[q]);
   }
   Serial_Debug_Port.println();
 }
 
-void get_metadata() {
+/*
+Metadata command
+----------------
+A new command byte is added to the sump protocol: 0x04 - get metadata.
+In response, the device sends a series of 1-byte keys, followed by data pertaining to that key.
+The series ends with the key 0x00. The system can be extended with new keys as more data needs to be reported.
+
+Proposed meta data format
+The keys are split up into two fields:
+ the upper 3 bits denote the type, and the lower 5 bits denote the token.
+The token is unique within the type.
+  Thus a 0x01 null-terminated string token is not the same as a 0x01 integer token.
+
+Type0 - null-terminated string, UTF-8 encoded
+---------------------------------------------
+0	0x00	not used, key means end of metadata
+1	0x01	device name (e.g. "Openbench Logic Sniffer v1.0", "Bus Pirate v3b"
+2	0x02	Version of the FPGA firmware
+3	0x03	Ancillary version (PIC firmware)
+
+Type2 - 32-bit unsigned integer
+-------------------------------
+0	0x20	Number of usable probes
+1	0x21	Amount of sample memory available (bytes)
+2	0x22	Amount of dynamic memory available (bytes)
+3	0x23	Maximum sample rate (hz)
+4	0x24	Protocol version (long) - see below
+
+Type4 - 8-bit unsigned integer
+------------------------------
+0	0x40	Number of usable probes (short)
+1	0x41	Protocol version (short)
+
+The protocol version (0x24) key holds a 4-stage version,
+  one per byte, where the MSB holds the major version number.
+As of the first release to support this metadata command,
+  the protocol version should be 2.
+This would be encoded as 0x00000002.
+
+3-7	unused
+----------
+*/
+void sumpMetadata() {
   /* device name */
   OLS_Port.write((uint8_t)0x01);
   //OLS_Port.write("AGLAMv0");
@@ -237,7 +273,7 @@ void get_metadata() {
 
   /* firmware version */
   OLS_Port.write((uint8_t)0x02);
-  OLS_Port.print("0.10");
+  OLS_Port.print("0.20");
   OLS_Port.write((uint8_t)0x00);
 
   /* sample memory */
@@ -262,7 +298,7 @@ void get_metadata() {
   OLS_Port.write((uint8_t)0x10);  //16
   //OLS_Port.write((uint8_t)0x20);//32
 
-  /* protocol version (2) */
+  /* protocol version - short (0x41) */
   OLS_Port.write((uint8_t)0x41);
   OLS_Port.write((uint8_t)0x02);
 
