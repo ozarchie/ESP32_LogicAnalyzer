@@ -2,7 +2,6 @@
 
 #include <Arduino.h>
 #include <stdint.h>
-#include "soc/i2s_struct.h"
 #include "config.h"
 #include "rom/lldesc.h"
 #include "soc/i2s_struct.h"
@@ -16,15 +15,15 @@
 #include "driver/ledc.h"
 #include "Vrekrer_scpi_parser.h"
 
-void start_dma_capture(void);
-static esp_err_t dma_desc_init(int );
-static void enable_out_clock(int );
-void captureMilli(void);
+static const char* TAG = "ESP32_LogicAnalyzer";
+static bool setTestOutput( int, int);
+
+void startCapture(void);
 
 // SUMP
 // ====
-void sumpCommand(void);
-void sumpMetadata(void);
+void getSumpData(void);
+void sendSumpMetadata(void);
 
 // SCPI
 // ====
@@ -36,23 +35,61 @@ SCPI_Parser lascpi;
 #define BOARD_esp32dev 1
 //#define BOARD_esp32s2 1
 #ifdef BOARD_esp32s2
-#define LOOPNEZS2 0                         // ESP32S2 loopnez problem
+      #define LOOPNEZS2 0                         // ESP32S2 loopnez problem
 #endif
 
 #undef DEBUG_OPERATION_TIMES              // If defined, print times for DMA and RLE operations
 
 #define USE_SERIAL2_FOR_OLS   1           // If 1, UART2 = OLS and UART0=Debug; else, UART0 = OLS and UART2=Debug
-/* XON/XOFF are not supported. */
-#define ALLOW_ZERO_RLE        0           // Enable RLE on data.
-#define CAPTURE_SIZE          128000
-#define DMA_MAX               (4096-4)
-#ifdef DEBUG_OPERATION_TIMES
-#define RLE_SIZE              92000
+                                          // XON/XOFF are not supported
+#define RXD2 16
+#define TXD2 17
+#if BOARD_esp32s2
+      HardwareSerial Serial2(2);
+      #define Serial Serial0
+#endif                                                                          
+
+// If 1, UART2 = OLS and UART0=Debug
+// else, UART0 = OLS and UART2=Debug
+#if USE_SERIAL2_FOR_OLS
+      #define Serial_Debug_Port Serial
+      #define Serial_Debug_Port_Baud 115200
+      //#define Serial_Debug_Port_Baud 921600
+      #define OLS_Port Serial2
+      #define OLS_Port_Baud 115200
+      //#define OLS_Port_Baud 3000000
 #else
-#define RLE_SIZE              96000
+      #define Serial_Debug_Port Serial2
+      #define Serial_Debug_Port_Baud 115200
+      #define OLS_Port Serial
+      #define OLS_Port_Baud 115200
 #endif
 
+ // ALLOW_ZERO_RLE 1 is Fast mode.
+ //  Add RLE Count 0 to RLE stack for non repeated values and postpone the RLE processing so faster
+ //   8Bit Mode : ~28.4k clock per 4k block, captures 3000us while inspecting ~10Mhz clock at 20Mhz mode
+ //  16Bit Mode : ~22.3k clock per 4k block, captures 1500us while inspecting ~10Mhz clock at 20Mhz mode
+ 
+ // ALLOW_ZERO_RLE 0 is Slow mode.
+ //  just RAW RLE buffer. It doesn't add 0 count values for non-repeated RLE values and process flags on the fly, so little slow but efficient.
+ //   8Bit Mode : ~34.7k clock per 4k block, captures 4700us while inspecting ~10Mhz clock at 20Mhz mode
+ //  16Bit Mode : ~30.3k clock per 4k block, captures 2400us while inspecting ~10Mhz clock at 20Mhz mode
+#define ALLOW_ZERO_RLE        0           // Enable "Fast mode" RLE on data
+#define CAPTURE_SIZE          128000
+#define DMA_MAX               (4096-4)
+
+#ifdef DEBUG_OPERATION_TIMES
+      #define RLE_SIZE        92000
+#else
+      #define RLE_SIZE        96000
+#endif
+
+#define CHANPIN GPIO.in
+
+// Map of digital input channel virtual pins to physical input pins
+// ================================================================
 // PIN Definitions for DEVKITC_V4
+#ifdef BOARD_esp32dev
 #define LED_PIN               2           //Led on while running and Blinks while transfering data.
 #define CLK_PIN               0
 
@@ -77,38 +114,6 @@ SCPI_Parser lascpi;
 #define A02_PIN               34    // ADC1-6
 #define A03_PIN               39    // ADC1-3
 #define A04_PIN               36    // ADC1-0
-
- /// ALLOW_ZERO_RLE 1 is Fast mode.
- //Add RLE Count 0 to RLE stack for non repeated values and postpone the RLE processing so faster.
- // 8Bit Mode : ~28.4k clock per 4k block, captures 3000us while inspecting ~10Mhz clock at 20Mhz mode
- //16Bit Mode : ~22.3k clock per 4k block, captures 1500us while inspecting ~10Mhz clock at 20Mhz mode
- 
- /// ALLOW_ZERO_RLE 0 is Slow mode.
- //just RAW RLE buffer. It doesn't add 0 count values for non-repeated RLE values and process flags on the fly, so little slow but efficient.
- // 8Bit Mode : ~34.7k clock per 4k block, captures 4700us while inspecting ~10Mhz clock at 20Mhz mode
- //16Bit Mode : ~30.3k clock per 4k block, captures 2400us while inspecting ~10Mhz clock at 20Mhz mode
-
-#define RXD2 16
-#define TXD2 17
-#if BOARD_esp32s2
-HardwareSerial Serial2(2);
-#define Serial Serial0
-#endif                                                                          
-
-// If 1, UART2 = OLS and UART0=Debug
-// else, UART0 = OLS and UART2=Debug
-#if USE_SERIAL2_FOR_OLS
-#define Serial_Debug_Port Serial
-#define Serial_Debug_Port_Baud 115200
-//#define Serial_Debug_Port_Baud 921600
-#define OLS_Port Serial2
-#define OLS_Port_Baud 115200
-//#define OLS_Port_Baud 3000000
-#else
-#define Serial_Debug_Port Serial2
-#define Serial_Debug_Port_Baud 115200
-#define OLS_Port Serial
-#define OLS_Port_Baud 115200
 #endif
 
 #ifdef DEBUG_OPERATION_TIMES
@@ -119,7 +124,10 @@ unsigned int time_debug_indice_rle[1024];
 unsigned int time_debug_indice_rle_p=0;
 #endif
 
-int               stop_at_desc      = -1;
+int               chan_num          = 0;
+int               sumpCmnd          = 0;
+byte              sumpLongCmnd[5];
+
 unsigned int      logicIndex        = 0;
 unsigned int      triggerIndex      = 0;
 uint32_t          readCount         = CAPTURE_SIZE;
@@ -132,130 +140,94 @@ unsigned long     divider           = 0;
 bool              rleEnabled        = 0;
 uint32_t          clock_per_read    = 0;
 
-typedef enum {
-  I2S_PARALLEL_BITS_8   = 8,
-  I2S_PARALLEL_BITS_16  = 16,
-  I2S_PARALLEL_BITS_32  = 32,
-} i2s_parallel_cfg_bits_t;
+int i;
+int z;
 
-typedef struct {
-  void* memory;
-  size_t size;
-} i2s_parallel_buffer_desc_t;
-i2s_parallel_buffer_desc_t bufdesc;
-
-typedef struct {
-  int gpio_bus[24];
-  int gpio_clk;
-  int clkspeed_hz;
-  i2s_parallel_cfg_bits_t bits;
-  i2s_parallel_buffer_desc_t* buf;
-} i2s_parallel_config_t;
-i2s_parallel_config_t cfg;
-void i2s_parallel_setup( const i2s_parallel_config_t *cfg);
-
-typedef struct {
-  volatile lldesc_t* dmadesc;
-  int desccount;
-} i2s_parallel_state_t;
-static i2s_parallel_state_t* i2s_state[2] = {NULL, NULL};
-
-//Calculate the amount of dma descs needed for a buffer desc
-static int calc_needed_dma_descs_for(i2s_parallel_buffer_desc_t *desc) {
-  int ret = (desc->size + DMA_MAX - 1) / DMA_MAX;
-  return ret;
-}
-
-typedef union {
-    struct {
-        uint8_t sample2;
-        uint8_t unused2;
-        uint8_t sample1;
-        uint8_t unused1;
-      };
-    struct{
-      uint16_t val2;
-      uint16_t val1;
-      };
-    uint32_t val;
-} dma_elem_t;
-
-typedef enum {
-    /* camera sends byte sequence: s1, s2, s3, s4, ...
-     * fifo receives: 00 s1 00 s2, 00 s2 00 s3, 00 s3 00 s4, ...
-     */
-    SM_0A0B_0B0C = 0,
-    /* camera sends byte sequence: s1, s2, s3, s4, ...
-     * fifo receives: 00 s1 00 s2, 00 s3 00 s4, ...
-     */
-    SM_0A0B_0C0D = 1,
-    /* camera sends byte sequence: s1, s2, s3, s4, ...
-     * fifo receives: 00 s1 00 00, 00 s2 00 00, 00 s3 00 00, ...
-     */
-    SM_0A00_0B00 = 3,
-} i2s_sampling_mode_t;
-
-typedef struct {
-    lldesc_t *dma_desc;
-    dma_elem_t **dma_buf;
-    bool dma_done;
-    size_t dma_desc_count;
-    size_t dma_desc_cur;
-    int dma_desc_triggered;
-    size_t dma_received_count;
-    size_t dma_filtered_count;
-    size_t dma_buf_width;
-    size_t dma_sample_count;
-    size_t dma_val_per_desc;
-    size_t dma_sample_per_desc;
-    i2s_sampling_mode_t sampling_mode;
-//    dma_filter_t dma_filter;
-    intr_handle_t i2s_intr_handle;
-//    QueueHandle_t data_ready;
-//    SemaphoreHandle_t frame_ready;
-//    TaskHandle_t dma_filter_task;
-} camera_state_t;
-camera_state_t *s_state;
-
-#define CHANPIN GPIO.in
 uint8_t channels_to_read=3;
+
+// SUMP Protocol Definitions
+// =========================
+
+// Short commands
+// --------------
 /*
-SUMP Protocol Definitions
-=========================
-
-
+      These commands are exactly one byte long.
 */
-#define SUMP_RESET 0x00
-#define SUMP_ARM   0x01
-#define SUMP_QUERY 0x02
-#define SUMP_XON   0x11
-#define SUMP_XOFF  0x13
+#define SUMP_RESET                  0x00  // Resets the device. Send 5 times when the receiver status is unknown.
+#define SUMP_ARM                    0x01  // Arms the trigger
+#define SUMP_QUERY                  0x02  // Asks for device identification ("SLA1")
 
-/* mask & values used, config ignored. only stage0 supported */
-#define SUMP_TRIGGER_MASK_CH_A      0xC0
-#define SUMP_TRIGGER_MASK_CH_B      0xC4
-#define SUMP_TRIGGER_MASK_CH_C      0xC8
-#define SUMP_TRIGGER_MASK_CH_D      0xCC
-
-#define SUMP_TRIGGER_VALUES_CH_A    0xC1
-#define SUMP_TRIGGER_VALUES_CH_B    0xC5
-#define SUMP_TRIGGER_VALUES_CH_C    0xC9
-#define SUMP_TRIGGER_VALUES_CH_D    0xCD
-
-#define SUMP_TRIGGER_CONFIG_CH_A    0xC2
-#define SUMP_TRIGGER_CONFIG_CH_B    0xC6
-#define SUMP_TRIGGER_CONFIG_CH_C    0xCA
-#define SUMP_TRIGGER_CONFIG_CH_D    0xCE
-
-/* Most flags (except RLE) are ignored. */
-#define SUMP_SET_DIVIDER            0x80
-#define SUMP_SET_READ_DELAY_COUNT   0x81
-#define SUMP_SET_FLAGS              0x82
-#define SUMP_SET_RLE                0x0100
 
 /* extended commands -- self-test unsupported, but metadata is returned. */
 #define SUMP_SELF_TEST              0x03
-#define SUMP_sumpMetadata           0x04
+#define SUMP_SEND_METADATA          0x04  // See sendSumpMetadata() function header
+#define SUMP_FINISH_NOW             0x05  // Finish Now (disable RLE mode)
+#define SUMP_QUERY_INPUTS           0x06  // The device responds with four bytes. Gives a snapshot of the current logic analyzer input bits
+#define SUMP_ARM_ADVANCED_TRIGGER   0x0F  // Arm the advanced trigger. Conditional capturing (under control of trigger sequencer) begins immediately.
+                                          //  Once trigger fires, the controller waits for "delay count" additional samples before returning captured data to client.
+
+#define SUMP_XON                    0x11  // Deprecated
+#define SUMP_XOFF                   0x13  // Deprecated
+
+// Long commands
+// -------------
+
+/*
+      These commands are five bytes long.
+      The first byte contains the opcode.
+      The bytes are sent LSB first.
+
+      Serial Mode: In serial mode, a trigger stage monitors only a single sampled input bit, selected with the "serial-channel".
+                        The selected bit is fed into a serial-to-parallel shift register.
+                        Thus the last 32 samples of a single bit can be evaluated using the normal masked compare logic.
+                        To be effective, you should use an external clock in serial mode.
+*/
+/* mask & values used, config ignored. only stage0 supported */
+#define SUMP_TRIGGER_MASK_CH_A      0xC0  // Defines which trigger values must match. The opcodes refer to stage 0-3 (A, B, C, D)
+#define SUMP_TRIGGER_MASK_CH_B      0xC4  //  In parallel mode each bit represents one channel,
+#define SUMP_TRIGGER_MASK_CH_C      0xC8  //  in serial mode each bit represents one of the last 32 samples of the selected channel
+#define SUMP_TRIGGER_MASK_CH_D      0xCC  //  A mask bit set to zero causes the corresponding trigger-value bit to be ignored
+
+#define SUMP_TRIGGER_VALUES_CH_A    0xC1  // Defines which values individual bits must have. The opcodes refer to stage 0-3 (A, B, C, D)
+#define SUMP_TRIGGER_VALUES_CH_B    0xC5  //  In parallel mode each bit represents one channel,
+#define SUMP_TRIGGER_VALUES_CH_C    0xC9  //  in serial mode each bit represents one of the last 32 samples of the selected channel
+#define SUMP_TRIGGER_VALUES_CH_D    0xCD
+
+#define SUMP_TRIGGER_CONFIG_CH_A    0xC2  // Configures the selected trigger stage, The opcodes refer to stage 0-3 (A, B, C, D)
+#define SUMP_TRIGGER_CONFIG_CH_B    0xC6  //  delay  (b15-00)  If a match occurs, the action of the stage is delayed by the given number of samples
+#define SUMP_TRIGGER_CONFIG_CH_C    0xCA  //  level  (b17-16) Trigger level at which the stage becomes active
+#define SUMP_TRIGGER_CONFIG_CH_D    0xCE  //  channel(b24,b23-20) Channel to be used in serial mode (Normal:0,31; Demux:0,15)
+                                          //  serial (b26)
+                                          //  start  (b27)
+
+/* Most flags (except RLE) are ignored. */
+#define SUMP_SET_DIVIDER            0x80  // When x is written, the sampling frequency is: sampleRate = clock / (x + 1)
+                                          // x = sumpLongCmnd[1]:sumpLongCmnd[0]
+#define SUMP_SET_READ_DELAY_COUNT   0x81  // (b15-b00) Read Count is the number of samples (divided by four) to read back from memory and sent to the host computer
+                                          // (b31-b16) Delay Count is the number of samples (divided by four) to capture after the trigger fired
+                                          // A Read Count bigger than the Delay Count means that data from before the trigger match will be read back
+#define SUMP_SET_FLAGS              0x82  // demux          (b0)    Enables the demux input module. (Filter must be off.)
+                                          // filter         (b1)    Enables the filter input module. (Demux must be off.)
+                                          // channel groups (b5-b2) Disable channel group. Disabled groups are excluded from data transmissions.
+                                          //  There are four groups, each represented by one bit.
+                                          //  Starting with the least significant bit of the channel group field channels are assigned as follows: 0-7, 8-15, 16-23, 24-31
+                                          // external       (b6)    Selects the clock to be used for sampling. Use external clock for sampling.
+                                          //  If set to 0, the internal 100Mhz reference clock divided by the configured divider is used.
+                                          //  (filter and demux are only available with internal clock)
+                                          // inverted       (b7)    When set to 1, the external clock will be inverted before being used.
+                                          //  The inversion causes a delay that may cause problems at very high clock rates.
+                                          //  This option only has an effect with external set to 1.
+                                          // EnableRLE      (b8)    For input samples which change infrequently, <value,rle-count> sent as pairs after max rle-count
+                                          // SwapByteOrder  (b9)    Swap number schemes (swap upper/lower 16bits)
+                                          // ExtTestMode    (b10)   External Test Mode: Output pattern on bits 31:16
+                                          // IntTestMode    (b11)   Internal Test Mode
+                                          // ExtraRLE       (b15-14)
+                                          //                 00, 01 Issue <value> & <rle-count> as pairs
+                                          //                 02     <values> reissued approximately every 256 <rle-count> fields
+                                          //                 03     <values> can be followed by unlimited numbers of <rle-counts>
+
+
+#define SUMP_SET_RLE                0x0100
 
 #define MAX_CAPTURE_SIZE            CAPTURE_SIZE
 
@@ -279,32 +251,23 @@ bool rle_init(void){
   return true;
 }
 
-void dma_serializer( dma_elem_t *dma_buffer ){
-  for ( int i = 0 ; i < s_state->dma_buf_width/4 ; i++ ){
-     uint8_t y =  dma_buffer[i].sample2;
-     dma_buffer[i].sample2 = dma_buffer[i].sample1;
-     dma_buffer[i].sample1 = y;
-   }
-}
+
+/* We have to encode RLE samples quickly.
+ * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
+ * for 20Mhz capture sampling speed.
+ */
+
+/* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
+ * actual data structure of DMA memory : 00s2,00s1,00s4,00s3
+ */
 
 void fast_rle_block_encode_asm_8bit_ch1(uint8_t *dma_buffer, int sample_size){ //size, not count
    uint8_t *desc_buff_end=dma_buffer;
    unsigned clocka=0;
    unsigned clockb=0;
 
-   /* We have to encode RLE samples quickly.
-    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
-    * for 20Mhz capture sampling speed.
-    */
-
-   /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
-    * actual data structure of DMA memory : 00s2,00s1,00s4,00s3
-    */
-    
    int dword_count=(sample_size/4) -1;   
    clocka = xthal_get_ccount();
-   
-   /* Assembly is not that hard. */
 
     __asm__ __volatile__(
       "memw \n"
@@ -462,15 +425,6 @@ void fast_rle_block_encode_asm_8bit_ch2(uint8_t *dma_buffer, int sample_size){ /
    uint8_t *desc_buff_end=dma_buffer;
    unsigned clocka;
    unsigned clockb=0;
-
-   /* We have to encode RLE samples quickly.
-    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
-    * for 20Mhz capture sampling speed.
-    */
-
-   /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
-    * actual data structure of DMA memory : 00s2,00s1,00s4,00s3
-    */
     
    int dword_count=(sample_size/4) -1;
    clocka = xthal_get_ccount();
@@ -632,15 +586,6 @@ void fast_rle_block_encode_asm_16bit(uint8_t *dma_buffer, int sample_size){ //si
    unsigned clocka;
    unsigned clockb=0;
 
-   /* We have to encode RLE samples quickly.
-    * Each sample needs to be encoded in under 12 clocks @240Mhz CPU 
-    * for 20Mhz capture sampling speed.
-    */
-
-   /* expected structure of DMA memory    : 00s1,00s2,00s3,00s4
-    * actual data structure of DMA memory : 00s2,00s1,00s4,00s3
-    */
-    
    int dword_count=(sample_size/4) -1;
    clocka = xthal_get_ccount();
    

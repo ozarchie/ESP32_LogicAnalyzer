@@ -26,8 +26,9 @@
  *  http://dangerousprototypes.com/docs/The_Logic_Sniffer%27s_extended_SUMP_protocol
  * 
  */ 
-static const char* TAG = "ESP32_LogicAnalyzer";
+
 #include "ESP32_LogicAnalyzer.h"
+#include "ESP32_LogicAnalyzer_I2S_DMA.h"
 
 void setup(void) {
   Serial_Debug_Port.begin(Serial_Debug_Port_Baud, SERIAL_8N1, RXD2, TXD2);
@@ -46,6 +47,8 @@ void setup(void) {
 //*/
  
   pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  //setTestOutput(100000, LED_PIN);   // Output 100KHz square wave on LED pin.
   Serial_Debug_Port.printf("\r\nESP32 Logic Sniffer V23.09.11\r\n");
   Serial_Debug_Port.printf("Initial boot ..\r\n");
   dma_desc_init(CAPTURE_SIZE);
@@ -53,69 +56,81 @@ void setup(void) {
 //  DEVKITc_V4 Pinout
 //  =================
 // Digital In
-  cfg.gpio_bus[0]  = D01_PIN;
-  cfg.gpio_bus[1]  = D02_PIN;
-  cfg.gpio_bus[2]  = D03_PIN;
-  cfg.gpio_bus[3]  = D04_PIN;
-  cfg.gpio_bus[4]  = D05_PIN;
-  cfg.gpio_bus[5]  = D06_PIN;
-  cfg.gpio_bus[6]  = D07_PIN;
-  cfg.gpio_bus[7]  = D08_PIN;
+// ----------
+// Map of digital input channel virtual pins to physical input pins
+// The table is defined in the .h file
+  cfg.gpio_bus[0]  = D01_PIN;   // GPIO13
+  cfg.gpio_bus[1]  = D02_PIN;   // GPIO12
+  cfg.gpio_bus[2]  = D03_PIN;   // GPIO14
+  cfg.gpio_bus[3]  = D04_PIN;   // GPIO27
+  cfg.gpio_bus[4]  = D05_PIN;   // GPIO26
+  cfg.gpio_bus[5]  = D06_PIN;   // GPIO25
+  cfg.gpio_bus[6]  = D07_PIN;   // GPIO33
+  cfg.gpio_bus[7]  = D08_PIN;   // GPIO32
 
-  cfg.gpio_bus[8]  = D09_PIN;    // SS
-  cfg.gpio_bus[9]  = D10_PIN;    // CLK
-  cfg.gpio_bus[10] = D11_PIN;    // MOSI
-  cfg.gpio_bus[11] = D12_PIN;    // MISO
-  cfg.gpio_bus[12] = D13_PIN;    // SCL1
-  cfg.gpio_bus[13] = D14_PIN;    // SDA1
-  cfg.gpio_bus[14] = D15_PIN;    // RTC-10
-  cfg.gpio_bus[15] = D16_PIN;    // RTC-13
+  cfg.gpio_bus[8]  = D09_PIN;    // SS       5
+  cfg.gpio_bus[9]  = D10_PIN;    // CLK     18
+  cfg.gpio_bus[10] = D11_PIN;    // MOSI    23
+  cfg.gpio_bus[11] = D12_PIN;    // MISO    19
+  cfg.gpio_bus[12] = D13_PIN;    // SCL1    22
+  cfg.gpio_bus[13] = D14_PIN;    // SDA1    21
+  cfg.gpio_bus[14] = D15_PIN;    // RTC-10   4
+  cfg.gpio_bus[15] = D16_PIN;    // RTC-13  15
 
 // Analog In
-/*
-  cfg.gpio_bus[8]  = A01_PIN;
-  cfg.gpio_bus[9]  = A02_PIN;
-  cfg.gpio_bus[10] = A03_PIN;
-  cfg.gpio_bus[11] = A04_PIN;
-*/
+  cfg.gpio_bus[16] = A01_PIN;    // ADC1-7  35
+  cfg.gpio_bus[17] = A02_PIN;    // ADC1-6  34
+  cfg.gpio_bus[18] = A03_PIN;    // ADC1-3  39
+  cfg.gpio_bus[19] = A04_PIN;    // ADC1-0  36
 
   cfg.gpio_clk = CLK_PIN;             // PinCLK_PIN used for XCK input from LedC
   cfg.bits = I2S_PARALLEL_BITS_16;
   cfg.clkspeed_hz = 2 * 1000 * 1000;  //resulting pixel clock = 1MHz
   cfg.buf = &bufdesc;
 
-  //enable_out_clock(I2S_HZ);
+  //setSampleRate(I2S_HZ);
   //fill_dma_desc( bufdesc );
   i2s_parallel_setup(&cfg);
 }
 
-int sumpCmnd = 0;
-byte sumpCmnds[5];
-
 void loop()
 {
-  int i;
-  int z;
-  int chan_num = 0;
   Serial_Debug_Port.printf("Main loop ..\r\n");
   while (1) {
+    processgetSumpDatas();
+  }
+}
+
+/*
+  All communication is done using a standard RS232 connection with 8 data bits, 1 stop bit and no parity.
+   The transfer rate can be set to 115200, 57600, 38400 or 19200 bps. XON/XOFF software flow control is available.
+  When sending captured data the analyzer will send blocks of four bytes, the first containing the lowest channels.
+   No start or end sequence exists.
+    The host can assume an end of transmission if no data has been received for the duration of one byte.
+  The protocol used by hardware version 0.5 and older is not covered here.
+   Hardware 0.6 uses protocol version 0, and hardware 0.7 uses protocol version 1.
+    Unless otherwise stated, commands exist in both versions.
+*/
+
+void processgetSumpDatas(void){
+
     if (OLS_Port.available() > 0) {
       z = OLS_Port.available();
       sumpCmnd = OLS_Port.read();
-      Serial_Debug_Port.printf("CMD: 0x%02X\r\n", sumpCmnd);
+      Serial_Debug_Port.printf("CMD: 0x%02X -> ", sumpCmnd);
       chan_num = 0;
       switch (sumpCmnd) {
         case SUMP_RESET:
           break;
         case SUMP_QUERY:
-          OLS_Port.print(F("1ALS"));    Serial_Debug_Port.print(F("1ALS"));
+          OLS_Port.print(F("1ALS"));    Serial_Debug_Port.print(F("1ALS\r\n"));
           break;
         case SUMP_ARM:
-          captureMilli();
+          startCapture();
           break;
         case SUMP_TRIGGER_MASK_CH_A:
-          sumpCommand();
-          trigger = ((uint16_t)sumpCmnds[1] << 8 ) | sumpCmnds[0];
+          getSumpData();
+          trigger = ((uint16_t)sumpLongCmnd[1] << 8 ) | sumpLongCmnd[0];
           if (trigger != 0) {
             Serial_Debug_Port.printf("Trigger Set for inputs : ");
             for ( int i = 0; i < 16 ; i++ ) {
@@ -128,8 +143,8 @@ void loop()
           }
           break;
         case SUMP_TRIGGER_VALUES_CH_A:
-          sumpCommand();
-          trigger_values = ((uint16_t)sumpCmnds[1] << 8 ) | sumpCmnds[0];
+          getSumpData();
+          trigger_values = ((uint16_t)sumpLongCmnd[1] << 8 ) | sumpLongCmnd[0];
           if (trigger) {
             Serial_Debug_Port.printf("Trigger Val for inputs : ");
             for ( int i = 0; i < 16 ; i++ ) {
@@ -141,7 +156,6 @@ void loop()
             Serial_Debug_Port.println();
           }
           break;
-
         case SUMP_TRIGGER_MASK_CH_B:
         case SUMP_TRIGGER_MASK_CH_C:
         case SUMP_TRIGGER_MASK_CH_D:
@@ -152,72 +166,68 @@ void loop()
         case SUMP_TRIGGER_CONFIG_CH_B:
         case SUMP_TRIGGER_CONFIG_CH_C:
         case SUMP_TRIGGER_CONFIG_CH_D:
-          sumpCommand();
-          /*
-             No config support
-          */
+          getSumpData();
+          // No config support
           break;
         case SUMP_SET_DIVIDER:
           /*
             the shifting needs to be done on the 32bit unsigned long variable
              so that << 16 doesn't end up as zero.
           */
-          sumpCommand();
-          divider = sumpCmnds[2];
+          getSumpData();
+          divider = sumpLongCmnd[2];
           divider = divider << 8;
-          divider += sumpCmnds[1];
+          divider += sumpLongCmnd[1];
           divider = divider << 8;
-          divider += sumpCmnds[0];
+          divider += sumpLongCmnd[0];
           setupDelay();
           break;
         case SUMP_SET_READ_DELAY_COUNT:
-          sumpCommand();
-          readCount = 4 * (((sumpCmnds[1] << 8) | sumpCmnds[0]) + 1);
+          getSumpData();
+          readCount = 4 * (((sumpLongCmnd[1] << 8) | sumpLongCmnd[0]) + 1);
           if (readCount > MAX_CAPTURE_SIZE)
             readCount = MAX_CAPTURE_SIZE;
-          delayCount = 4 * (((sumpCmnds[3] << 8) | sumpCmnds[2]) + 1);
+          delayCount = 4 * (((sumpLongCmnd[3] << 8) | sumpLongCmnd[2]) + 1);
           if (delayCount > MAX_CAPTURE_SIZE)
             delayCount = MAX_CAPTURE_SIZE;
           break;
-
         case SUMP_SET_FLAGS:
-          sumpCommand();
-          rleEnabled = sumpCmnds[1] & 0x1;
+          getSumpData();
+          rleEnabled = sumpLongCmnd[1] & 0x01;
           if (rleEnabled)
             Serial_Debug_Port.println("RLE Compression enabled");
           else
-            Serial_Debug_Port.println("Non-RLE Operation enable");
-          Serial_Debug_Port.printf("Demux  %c\r\n", sumpCmnds[0] & 0x01 ? 'Y' : 'N');
-          Serial_Debug_Port.printf("Filter %c\r\n", sumpCmnds[0] & 0x02 ? 'Y' : 'N');
-          channels_to_read = (~(sumpCmnds[0] >> 2) & 0x0F);
+            Serial_Debug_Port.println("Non-RLE Operation");
+          Serial_Debug_Port.printf("Demux  %c\r\n", sumpLongCmnd[0] & 0x01 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("Filter %c\r\n", sumpLongCmnd[0] & 0x02 ? 'Y' : 'N');
+          channels_to_read = (~(sumpLongCmnd[0] >> 2) & 0x0F);
           Serial_Debug_Port.printf("Channels to read: 0x%X \r\n",  channels_to_read);
           if(channels_to_read == 3)
-          Serial_Debug_Port.printf("External Clock %c\r\n", sumpCmnds[0] & 0x40 ? 'Y' : 'N');
-          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", sumpCmnds[0] & 0x80 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("External Clock %c\r\n", sumpLongCmnd[0] & 0x40 ? 'Y' : 'N');
+          Serial_Debug_Port.printf("inv_capture_clock %c\r\n", sumpLongCmnd[0] & 0x80 ? 'Y' : 'N');
           break;
-        case SUMP_sumpMetadata:
-          sumpMetadata();
+        case SUMP_SEND_METADATA:
+          sendSumpMetadata();
           break;
         case SUMP_SELF_TEST:
           break;
         default:
           Serial_Debug_Port.printf("Unrecognized cmd 0x%02X\r\n", sumpCmnd );
-          sumpCommand();
+          getSumpData();
           break;
       }
     }
-  }
 }
 
-void sumpCommand() {
+void getSumpData() {
   delay(10);
-  sumpCmnds[0] = OLS_Port.read();
-  sumpCmnds[1] = OLS_Port.read();
-  sumpCmnds[2] = OLS_Port.read();
-  sumpCmnds[3] = OLS_Port.read();
+  sumpLongCmnd[0] = OLS_Port.read();
+  sumpLongCmnd[1] = OLS_Port.read();
+  sumpLongCmnd[2] = OLS_Port.read();
+  sumpLongCmnd[3] = OLS_Port.read();
   Serial_Debug_Port.printf("CMDs ");
   for (int q = 0; q < 4; q++) {
-    Serial_Debug_Port.printf(" 0x%02X", sumpCmnds[q]);
+    Serial_Debug_Port.printf(" 0x%02X", sumpLongCmnd[q]);
   }
   Serial_Debug_Port.println();
 }
@@ -264,11 +274,14 @@ This would be encoded as 0x00000002.
 3-7	unused
 ----------
 */
-void sumpMetadata() {
+void sendSumpMetadata() {
   /* device name */
   OLS_Port.write((uint8_t)0x01);
-  //OLS_Port.write("AGLAMv0");
-  OLS_Port.write("ESP32 Logic Analyzer v0.5");
+#ifdef BOARD_esp32dev
+  OLS_Port.write("ESPLAM32dev");
+#else // ifdef BOARD_esp32s2
+  OLS_Port.write("ESPLAM32s2");
+#endif
   OLS_Port.write((uint8_t)0x00);
 
   /* firmware version */
@@ -284,8 +297,9 @@ void sumpMetadata() {
   OLS_Port.write((uint8_t) (capture_size >> 8) & 0xFF);
   OLS_Port.write((uint8_t) (capture_size >> 0) & 0xFF);
 
-  /* sample rate (20MHz) */
-  uint32_t capture_speed = 200000000;
+  /* Maximum sample rate (20MHz) */
+//  uint32_t capture_speed = 200000000;     // 200MHz: FPGA internal clock
+  uint32_t capture_speed = 80000000;      // 80MHz: ESP32 APB_CLK = 80MHz
   OLS_Port.write((uint8_t) 0x23);
   OLS_Port.write((uint8_t) (capture_speed >> 24) & 0xFF);
   OLS_Port.write((uint8_t) (capture_speed >> 16) & 0xFF);
@@ -307,23 +321,26 @@ void sumpMetadata() {
 }
 
 void setupDelay() {
-  double rate = 100000000.0 / (divider + 1.0);
-  enable_out_clock((int)rate);
-  Serial_Debug_Port.printf("Capture Speed : %.2f Mhz\r\n", rate/1000000.0);
+  double rate = 100000000.0 / (divider + 1.0);  // Internal clock is 100MHz
+  setSampleRate((int)rate);
+  Serial_Debug_Port.printf("Sample Rate: %.2f MHz\r\n", rate/1000000.0);
 }
 
-void captureMilli() {
+void startCapture() {
   uint32_t a, b, c, d;
+  Serial_Debug_Port.println("");  
+  Serial_Debug_Port.println("Starting Capture");  
   Serial_Debug_Port.printf("FreeHeap         :%u\r\n", ESP.getFreeHeap());
-  Serial_Debug_Port.printf("FreeHeap 64 Byte :%u\r\n", heap_caps_get_largest_free_block(64) );
-  Serial_Debug_Port.printf("Trigger Values 0x%X\r\n", trigger_values);
-  Serial_Debug_Port.printf("Trigger        0x%X\r\n", trigger);
-  Serial_Debug_Port.printf("Running on CORE #%d\r\n", xPortGetCoreID());
-  Serial_Debug_Port.printf("Reading %d Samples\r\n", readCount);
+  Serial_Debug_Port.printf("FreeHeap(64Byte) :%u\r\n", heap_caps_get_largest_free_block(64) );
+  Serial_Debug_Port.printf("Trigger Values   :0x%X\r\n", trigger_values);
+  Serial_Debug_Port.printf("Trigger          :0x%X\r\n", trigger);
+  Serial_Debug_Port.printf("Running on CORE  :#%d\r\n", xPortGetCoreID());
+  Serial_Debug_Port.printf("Samples          :%d\r\n", readCount);
 
-  digitalWrite( LED_PIN, HIGH );
+  digitalWrite( LED_PIN, LOW );
 
-  ESP_LOGD(TAG, "dma_sample_count: %d", s_state->dma_sample_count);
+  Serial_Debug_Port.printf("dma_sample_count :%d\r\n", s_state->dma_sample_count);
+  //ESP_LOGD(TAG, "dma_sample_count: %d", s_state->dma_sample_count);
   rle_init();
   start_dma_capture();
 
@@ -331,24 +348,24 @@ void captureMilli() {
   while ((! s_state->dma_done ) && (Timeout-- >0)) {
     delay(100);
   }
-  Serial_Debug_Port.printf("\r\ndma_done:  %s\r\n", s_state->dma_done ? "true" : "false");
+  Serial_Debug_Port.printf("dma_done         :%s\r\n", s_state->dma_done ? "true" : "false");
 
   yield();
 
-  digitalWrite( LED_PIN, LOW );
+  digitalWrite( LED_PIN, HIGH );
 
-  Serial_Debug_Port.printf("ReadCount:  %d\r\n",readCount);
-  Serial_Debug_Port.printf("DMA Desc Current: %d\r\n",  s_state->dma_desc_cur);
+  Serial_Debug_Port.printf("ReadCount        :%d\r\n",readCount);
+  Serial_Debug_Port.printf("DMA Desc Current :%d\r\n",  s_state->dma_desc_cur);
 
-  ESP_LOGD(TAG, "Copying buffer.");
+  ESP_LOGD(TAG, "Copying buffer");
 
   int filled_desc = ((readCount/2) / s_state->dma_sample_per_desc);
   int filled_sample_offset = ((readCount/2) % s_state->dma_sample_per_desc); //((readCount - 1) % s_state->dma_val_per_desc) % s_state->dma_sample_per_desc;
   int filled_full_sample_offset = s_state->dma_sample_per_desc;
   
   int tx_count = 0;
-  Serial_Debug_Port.printf("used_desc = %d\r\n", filled_desc);
-  Serial_Debug_Port.printf("used_sample_offset = %d\r\n", filled_sample_offset);
+  Serial_Debug_Port.printf("useddesc         :%d\r\n", filled_desc);
+  Serial_Debug_Port.printf("usedsampleoffset :%d\r\n", filled_sample_offset);
 
 #ifdef DEBUG_OPERATION_TIMES
   Serial_Debug_Port.printf( "\r\nDMA Times:" );
@@ -550,5 +567,5 @@ brexit:
   //OLS_Port.flush();
   //ESP_LOGD(TAG, "TX_Count: %d", tx_count);
   ESP_LOGD(TAG, "End. TX: %d", tx_count);
-  digitalWrite( LED_PIN, LOW );
+  digitalWrite( LED_PIN, HIGH );
 }
